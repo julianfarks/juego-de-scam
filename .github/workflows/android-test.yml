@@ -1,0 +1,47 @@
+name: Prueba en emulador Android
+
+on:
+  workflow_run:
+    workflows: ["Android APK"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  emulator:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Descargar el APK publicado
+        run: curl -fsSL -o TeleTimo3D-debug.apk https://github.com/julianfarks/juego-de-scam/releases/download/ultima-version/TeleTimo3D-debug.apk && ls -la *.apk
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulador Android (API 31, x86_64 con traducción ARM)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: google_apis
+          arch: x86_64
+          ram-size: 8192M
+          disk-size: 14G
+          cores: 4
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash tests/android/emulator_test.sh
+      - name: Publicar resultados
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p android_out
+          tar czf android-ultima.tgz android_out
+          cp android-ultima.tgz android-${GITHUB_RUN_NUMBER}.tgz
+          gh release view evaluaciones >/dev/null 2>&1 || gh release create evaluaciones --title "Evaluaciones de la IA (CI)" --notes "Resultados de pruebas automáticas." --prerelease
+          gh release upload evaluaciones android-ultima.tgz android-${GITHUB_RUN_NUMBER}.tgz --clobber

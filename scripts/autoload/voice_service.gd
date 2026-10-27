@@ -35,6 +35,19 @@ var _speech_token := 0
 var _utterance_id := 0
 var _tts_voices: Array = []
 var current_speaker := ""
+var _sys_tts_checked := false
+
+
+## La voz del sistema solo se consulta cuando hace falta (en algunos Android sin
+## motor de voz, consultarla al arrancar puede dar problemas).
+func _system_voices() -> Array:
+	if not _sys_tts_checked:
+		_sys_tts_checked = true
+		if DisplayServer.get_name() != "headless" and ProjectSettings.get_setting("audio/general/text_to_speech", false):
+			_tts_voices = DisplayServer.tts_get_voices_for_language("es")
+			DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, _on_tts_end)
+			DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, _on_tts_end)
+	return _tts_voices
 var last_tts_engine := ""
 
 
@@ -49,10 +62,6 @@ func _ready() -> void:
 	_player.bus = "Voice"
 	add_child(_player)
 	_player.finished.connect(_on_chunk_finished)
-	if DisplayServer.get_name() != "headless":
-		_tts_voices = DisplayServer.tts_get_voices_for_language("es")
-		DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, _on_tts_end)
-		DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, _on_tts_end)
 	if get_tree().has_signal("on_request_permissions_result"):
 		get_tree().on_request_permissions_result.connect(_on_permission)
 
@@ -71,7 +80,7 @@ func can_speak() -> bool:
 	var mode := str(Settings.get_value("tts_mode"))
 	if mode == "off":
 		return false
-	return neural_voice_ready() or not _tts_voices.is_empty()
+	return neural_voice_ready() or not _system_voices().is_empty()
 
 
 func tts_status_text() -> String:
@@ -80,8 +89,8 @@ func tts_status_text() -> String:
 	if neural_voice_ready():
 		return "Voces neuronales en el móvil (Kokoro)"
 	if Brain.voice_state in ["missing", "downloading", "error"]:
-		return "Voces neuronales sin descargar: se usa la voz del sistema" if not _tts_voices.is_empty() else "Sin voces disponibles: solo subtítulos"
-	return "Voz del sistema Android" if not _tts_voices.is_empty() else "Sin voces disponibles: solo subtítulos"
+		return "Voces neuronales sin descargar: se usa la voz del sistema" if not _system_voices().is_empty() else "Sin voces disponibles: solo subtítulos"
+	return "Voz del sistema Android" if not _system_voices().is_empty() else "Sin voces disponibles: solo subtítulos"
 
 
 func stt_status_text() -> String:
@@ -135,7 +144,7 @@ func speak(text: String, profile: Dictionary) -> void:
 			if not _player.playing and _queue.is_empty():
 				_on_speech_done()
 			return
-	if mode != "off" and not _tts_voices.is_empty():
+	if mode != "off" and not _system_voices().is_empty():
 		_speak_mode = "sistema"
 		last_tts_engine = "sistema"
 		_utterance_id += 1

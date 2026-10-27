@@ -30,7 +30,10 @@ func _ready() -> void:
 	_to_menu()
 	# IA local: si los modelos ya están, se cargan en segundo plano; si no, se ofrece
 	# descargarlos (una sola vez) en el primer inicio.
-	if Brain.available and OS.get_cmdline_user_args().is_empty():
+	var autotest := FileAccess.file_exists("user://autotest.flag") or "--autotest" in OS.get_cmdline_user_args()
+	if autotest:
+		add_child(load("res://scripts/debug/autotest.gd").new())
+	elif Brain.available and OS.get_cmdline_user_args().is_empty():
 		if Brain.missing_packs().is_empty():
 			Brain.load_all()
 		elif not bool(Settings.get_value("ai_setup_seen")):
