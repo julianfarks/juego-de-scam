@@ -20,7 +20,10 @@ static func _to_wav(samples: PackedFloat32Array, rate: int = RATE, loop := false
 	if loop:
 		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		w.loop_begin = 0
-		w.loop_end = samples.size()
+		# Unas muestras antes del final: con loop_end == longitud, el mezclador de
+		# Android leía fuera del búfer al interpolar y la app se cerraba (SIGSEGV en
+		# el hilo AudioTrack; detectado en el emulador por bisección).
+		w.loop_end = maxi(0, samples.size() - 16)
 	return w
 
 

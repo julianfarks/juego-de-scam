@@ -14,8 +14,13 @@ const MIRROR := "https://github.com/julianfarks/juego-de-scam/releases/download/
 
 ## Paquetes de modelos. "size" permite comprobar la descarga y reanudarla.
 const PACKS := {
-	"llm_normal": {"file": "qwen3.5-2b-q4km.gguf", "size": 1280836064, "label": "Cerebro de los clientes (Qwen3.5 2B)",
-		"hf": "https://huggingface.co/NobodyWho/Qwen_Qwen3.5-2B-GGUF/resolve/main/Qwen_Qwen3.5-2B-Q4_K_M-vendor-sampling.gguf"},
+	# Gemma 4 E2B: el mejor en las pruebas de conversación (coherente, en personaje,
+	# recuerda precios y contradicciones). Pesa más de 2 GB, así que el espejo de
+	# GitHub lo guarda en dos partes que se unen tras la descarga.
+	"llm_normal": {"file": "gemma4-e2b-q4km.gguf", "size": 3106736256, "label": "Cerebro de los clientes (Gemma 4 E2B)",
+		"parts": [1600000000, 1506736256],
+		"hf": "https://huggingface.co/NobodyWho/Google_Gemma4-E2B-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"},
+	# Para móviles con poca memoria. Responde peor (más corto y menos ingenioso).
 	"llm_ligero": {"file": "qwen3.5-0.8b-q4km.gguf", "size": 532517344, "label": "Cerebro ligero (Qwen3.5 0.8B)",
 		"hf": "https://huggingface.co/NobodyWho/Qwen_Qwen3.5-0.8B-GGUF/resolve/main/Qwen_Qwen3.5-0.8B-Q4_K_M-vendor-sampling.gguf"},
 	"stt": {"file": "whisper-base.zip", "size": 144862025, "label": "Oído (Whisper)", "dir": "whisper"},
@@ -61,11 +66,26 @@ func choose_llm_pack() -> String:
 		return "llm_ligero"
 	if forced == "normal":
 		return "llm_normal"
-	var mem: Dictionary = OS.get_memory_info()
-	var phys := int(mem.get("physical", 0))
-	if phys > 0 and phys < int(5.5 * 1024 * 1024 * 1024):
+	var phys := total_ram_bytes()
+	if phys > 0 and phys < int(5.0 * 1024 * 1024 * 1024):
 		return "llm_ligero"
 	return "llm_normal"
+
+
+## Memoria total del dispositivo. En Android OS.get_memory_info() devuelve -1,
+## así que se lee /proc/meminfo.
+static func total_ram_bytes() -> int:
+	var phys := int(OS.get_memory_info().get("physical", -1))
+	if phys > 0:
+		return phys
+	var f := FileAccess.open("/proc/meminfo", FileAccess.READ)
+	if f == null:
+		return -1
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("MemTotal:"):
+			return int(line.get_slice(":", 1).strip_edges().get_slice(" ", 0)) * 1024
+	return -1
 
 
 func pack_path(id: String) -> String:
@@ -149,9 +169,24 @@ func download_all() -> bool:
 			_dl_total = total
 			download_progress.emit(base + d, total, p["label"]))
 		var dest := DIR.path_join(p["file"])
-		var got: bool = await _downloader.fetch(MIRROR + p["file"], dest, int(p["size"]))
+		var got := false
+		if p.has("parts"):
+			got = await _fetch_parts(p, dest, base, total)
+		else:
+			got = await _downloader.fetch(MIRROR + p["file"], dest, int(p["size"]))
 		if not got and not _downloader.cancelled and p.has("hf"):
+			# Plan B: el archivo entero desde Hugging Face.
+			var first_error := _downloader.last_error
+			_downloader = Downloader.new()
+			_downloader.progress.connect(func(d: int, _t: int) -> void:
+				_dl_done = base + d
+				_dl_total = total
+				download_progress.emit(base + d, total, p["label"]))
 			got = await _downloader.fetch(p["hf"], dest, int(p["size"]))
+			if got:
+				_remove_parts(p, dest)
+			elif _downloader.last_error == "":
+				_downloader.last_error = first_error
 		if not got:
 			last_error = "%s: %s" % [p["label"], _downloader.last_error]
 			ok = false
@@ -183,6 +218,61 @@ func download_all() -> bool:
 	return ok
 
 
+## Descarga un modelo troceado (.001, .002…) del espejo y lo vuelve a unir.
+func _fetch_parts(p: Dictionary, dest: String, base: int, total: int) -> bool:
+	var sizes: Array = p["parts"]
+	var offset := 0
+	for i in sizes.size():
+		var part_dest := "%s.%03d" % [dest, i + 1]
+		var d := Downloader.new()
+		_downloader = d
+		var off := offset
+		d.progress.connect(func(x: int, _t: int) -> void:
+			_dl_done = base + off + x
+			_dl_total = total
+			download_progress.emit(base + off + x, total, p["label"]))
+		if not await d.fetch("%s%s.%03d" % [MIRROR, p["file"], i + 1], part_dest, int(sizes[i])):
+			return false
+		offset += int(sizes[i])
+	download_progress.emit(base + offset, total, "Uniendo " + p["label"])
+	await get_tree().process_frame
+	# La primera parte se renombra (sin copiarla) y las demás se le añaden al final:
+	# así el espacio extra necesario es solo el de una parte.
+	if FileAccess.file_exists(dest + ".part"):
+		DirAccess.remove_absolute(dest + ".part")
+	DirAccess.rename_absolute("%s.001" % dest, dest + ".part")
+	var out := FileAccess.open(dest + ".part", FileAccess.READ_WRITE)
+	if out == null:
+		_downloader.last_error = "No se pudo escribir en el almacenamiento"
+		return false
+	out.seek_end()
+	for i in range(1, sizes.size()):
+		var src_path := "%s.%03d" % [dest, i + 1]
+		var src := FileAccess.open(src_path, FileAccess.READ)
+		while src.get_position() < src.get_length():
+			out.store_buffer(src.get_buffer(8 * 1024 * 1024))
+			await get_tree().process_frame
+		src.close()
+		DirAccess.remove_absolute(src_path)
+	out.close()
+	if FileAccess.get_size(dest + ".part") != int(p["size"]):
+		_downloader.last_error = "El archivo unido no tiene el tamaño esperado"
+		DirAccess.remove_absolute(dest + ".part")
+		return false
+	DirAccess.rename_absolute(dest + ".part", dest)
+	_remove_parts(p, dest)
+	return true
+
+
+func _remove_parts(p: Dictionary, dest: String) -> void:
+	if not p.has("parts"):
+		return
+	for i in (p["parts"] as Array).size():
+		for x in ["%s.%03d" % [dest, i + 1], "%s.%03d.part" % [dest, i + 1]]:
+			if FileAccess.file_exists(x):
+				DirAccess.remove_absolute(x)
+
+
 ## Carga en segundo plano todo lo que esté descargado.
 func load_all() -> void:
 	if not available:
@@ -205,6 +295,7 @@ func delete_models() -> void:
 		if p.has("dir"):
 			_remove_tree(pack_path(id))
 		var f := DIR.path_join(p["file"])
+		_remove_parts(p, f)
 		for x in [f, f + ".part"]:
 			if FileAccess.file_exists(x):
 				DirAccess.remove_absolute(x)
@@ -298,10 +389,9 @@ func new_chat(system_prompt: String, schema: Dictionary, temperature := 0.8) -> 
 	if llm_state != "ready":
 		return null
 	var sampler = ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(JSON.stringify(schema)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(temperature).top_p(0.92, 1).dist()
-	var threads := clampi(OS.get_processor_count() - 2, 2, 6)
 	return await ClassDB.class_call_static("NobodyWhoChat", "create", model, {
 		"system_prompt": system_prompt, "n_ctx": 4096, "sampler": sampler,
-		"template_variables": {"enable_thinking": false}, "n_threads": threads,
+		"template_variables": {"enable_thinking": false},
 		"context_shift": {"keep_first_turns": 1, "keep_last_turns": 4, "target": 0.6},
 	})
 

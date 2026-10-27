@@ -43,6 +43,22 @@ for item in ITEMS:
     if item["mode"] == "file":
         p = hf_hub_download(repo, wanted[0], local_dir="dl/" + item["name"])
         shutil.copy(p, os.path.join(OUT, item["name"]))
+    elif item["mode"] == "split":
+        # Las Releases de GitHub admiten como máximo 2 GB por archivo: se trocea
+        # en partes .001, .002… que el juego vuelve a unir tras descargarlas.
+        p = hf_hub_download(repo, wanted[0], local_dir="dl/" + item["name"])
+        chunk = int(item.get("chunk", 1600000000))
+        with open(p, "rb") as src:
+            n = 0
+            while True:
+                data = src.read(chunk)
+                if not data:
+                    break
+                n += 1
+                part = os.path.join(OUT, f"{item['name']}.{n:03d}")
+                open(part, "wb").write(data)
+                listing.append(f"PARTE {os.path.basename(part)} {len(data)}")
+        os.remove(p)
     else:
         base = "dl/" + item["name"]
         for w in wanted:

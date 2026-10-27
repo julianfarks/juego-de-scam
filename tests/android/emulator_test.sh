@@ -47,14 +47,14 @@ while true; do
   sleep 30
   N=$((N+1))
   adb exec-out screencap -p > $OUT/pantalla_$(printf %03d $N).png 2>/dev/null || true
-  if ! adb shell pidof $PKG > /dev/null; then
-    echo "La app no está en ejecución (¿cierre inesperado?)"
-    echo "CIERRE" > $OUT/estado.txt
-    break
-  fi
   if adb shell run-as $PKG cat files/autotest/terminado.txt > $OUT/terminado.txt 2>/dev/null && [ -s $OUT/terminado.txt ]; then
     echo "Prueba interna terminada: $(cat $OUT/terminado.txt)"
     echo "TERMINADO" > $OUT/estado.txt
+    break
+  fi
+  if ! adb shell pidof $PKG > /dev/null; then
+    echo "La app no está en ejecución (¿cierre inesperado?)"
+    echo "CIERRE" > $OUT/estado.txt
     break
   fi
   adb shell run-as $PKG cat files/autotest/resultado.txt 2>/dev/null | tail -2

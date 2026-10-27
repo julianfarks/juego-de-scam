@@ -89,6 +89,11 @@ jobs:
           done
           unzip -o -j -q ort.aar "jni/x86_64/libonnxruntime.so" -d addons/nobodywho/
           readelf -d addons/nobodywho/libonnxruntime.so | grep NEEDED || true
+          # La biblioteca x86_64 usa símbolos de ONNX Runtime (OrtGetApiBase) sin declararlo
+          # como dependencia (DT_NEEDED), y el enlazador de Android no lo encontraba: se declara.
+          sudo apt-get install -y -qq patchelf
+          patchelf --add-needed libonnxruntime.so addons/nobodywho/libnobodywho-godot-x86_64-linux-android-release.so
+          readelf -d addons/nobodywho/libnobodywho-godot-x86_64-linux-android-release.so | grep NEEDED
           printf '\n[dependencies]\nandroid.x86_64 = {"res://addons/nobodywho/libonnxruntime.so": ""}\n' >> addons/nobodywho/nobodywho.gdextension
           godot --headless --path . --export-debug "AndroidX86Test" build/TeleTimo3D-x86_64-test.apk
           ls -la build

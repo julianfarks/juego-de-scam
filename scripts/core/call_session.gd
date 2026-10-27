@@ -205,7 +205,9 @@ func _ask_ai(message: String, cancellable := true) -> Dictionary:
 		_turn_seq += 1
 	var my := _turn_seq
 	var t0 := Time.get_ticks_msec()
+	_throttle(true)
 	var raw := await _stream(chat.ask(message), my)
+	_throttle(false)
 	if my != _turn_seq or (not active and _prep == "done"):
 		return {"ok": false, "cancelled": true}
 	var r := _parse(raw)
@@ -214,7 +216,9 @@ func _ask_ai(message: String, cancellable := true) -> Dictionary:
 		var hist: Array = await chat.get_chat_history()
 		if hist.size() >= 2 and str(hist[-1].get("role", "")) == "assistant":
 			hist.pop_back()
+			_throttle(true)
 			var raw2 := await _stream(chat.complete(hist, {}), my)
+			_throttle(false)
 			var r2 := _parse(raw2)
 			if r2["ok"]:
 				r = r2
@@ -253,8 +257,22 @@ func _stream(stream: Object, my: int) -> String:
 	return out
 
 
+## Mientras el modelo piensa se baja la tasa de imágenes: la pantalla de llamada
+## apenas cambia y así el procesador (y la batería) se dedican a la IA.
+static var _saved_fps := -1
+func _throttle(on: bool) -> void:
+	if on and _saved_fps < 0:
+		_saved_fps = Engine.max_fps
+		Engine.max_fps = 24 if _saved_fps == 0 else mini(_saved_fps, 24)
+	elif not on and _saved_fps >= 0:
+		Engine.max_fps = _saved_fps
+		_saved_fps = -1
+
+
 func _parse(raw: String) -> Dictionary:
-	var j = JSON.parse_string(raw)
+	var j = JSON.parse_string(raw) if raw.strip_edges().ends_with("}") else null
+	if not (j is Dictionary) and raw != "":
+		print("IA: respuesta incompleta (%d caracteres): %s" % [raw.length(), raw.right(200)])
 	if not (j is Dictionary):
 		# Respuesta cortada (p. ej. por tiempo): si la frase ya estaba completa, se usa
 		if JsonPeek.string_field_closed(raw, "respuesta"):
