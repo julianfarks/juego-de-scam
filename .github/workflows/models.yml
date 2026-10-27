@@ -1,0 +1,28 @@
+name: Espejo de modelos
+
+on:
+  push:
+    paths: ["tools/models/**", ".github/workflows/models.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q huggingface_hub
+      - name: Descargar modelos
+        run: python tools/models/mirror.py
+      - name: Subir a la Release "modelos"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la out
+          gh release view modelos >/dev/null 2>&1 || gh release create modelos --title "Modelos de IA (espejo)" --notes "Copias de modelos abiertos usados por el juego. Ver docs/MODELOS.md para licencias." --prerelease
+          gh release upload modelos out/* --clobber

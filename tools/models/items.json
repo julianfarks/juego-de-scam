@@ -1,0 +1,11 @@
+[
+  {"name": "qwen3.5-0.8b-q4km.gguf", "repo": "NobodyWho/Qwen_Qwen3.5-0.8B-GGUF", "patterns": ["*Q4_K_M*.gguf"], "mode": "file"},
+  {"name": "qwen3.5-2b-q4km.gguf", "repo": "NobodyWho/Qwen_Qwen3.5-2B-GGUF", "patterns": ["*Q4_K_M*.gguf"], "mode": "file"},
+  {"name": "qwen3.5-4b", "repo": "NobodyWho/Qwen_Qwen3.5-4B-GGUF", "patterns": [], "mode": "file", "list_only": true},
+  {"name": "gemma4-e2b", "repo": "NobodyWho/Google_Gemma4-E2B-GGUF", "patterns": [], "mode": "file", "list_only": true},
+  {"name": "whisper-base", "repo": "onnx-community/whisper-base", "patterns": ["config.json", "generation_config.json", "tokenizer.json", "onnx/encoder_model_q4.onnx", "onnx/decoder_model_merged_q4.onnx"], "mode": "zip"},
+  {"name": "whisper-small", "repo": "onnx-community/whisper-small", "patterns": ["config.json", "generation_config.json", "tokenizer.json", "onnx/encoder_model_q4.onnx", "onnx/decoder_model_merged_q4.onnx"], "mode": "zip"},
+  {"name": "silero-vad", "repo": "onnx-community/silero-vad", "patterns": ["onnx/model.onnx"], "mode": "zip"},
+  {"name": "kokoro-es", "repo": "NobodyWho/Kokoro-82M", "patterns": ["model.onnx", "config.json", "voices/ef_*", "voices/em_*"], "mode": "zip"},
+  {"name": "supertonic-3", "repo": "Supertone/supertonic-3", "patterns": ["*.json", "onnx/*", "voice_styles/*"], "mode": "zip"}
+]
