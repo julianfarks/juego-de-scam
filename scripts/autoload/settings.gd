@@ -1,7 +1,6 @@
 extends Node
 ## Ajustes del jugador (separados del progreso). Se guardan en user://settings.cfg.
-## Aquí NUNCA se guardan claves de API: el servidor IA guarda las suyas en su .env.
-## El "código de acceso" es una contraseña sencilla que el dueño del servidor reparte.
+## El juego no usa servidores ni claves: toda la IA funciona en el dispositivo.
 
 signal changed(key: String)
 signal graphics_changed
@@ -18,12 +17,13 @@ const DEFAULTS := {
 	"vol_sfx": 0.8,
 	"vol_voice": 1.0,
 	"subtitles": true,
-	"tts_mode": "system",    # system | remote | off
-	"stt_mode": "remote",    # remote | off
+	"tts_mode": "ia",        # ia (voces neuronales locales) | system (voz de Android) | off
 	"vad_auto_stop": true,
-	"voice_speed": 1.1,
-	"backend_url": "",
-	"access_code": "",
+	"voice_speed": 1.0,
+	"llm_size": "auto",      # auto | normal | ligero
+	"ai_gpu": true,          # aceleración por GPU del modelo de lenguaje
+	"gpu_probe": false,      # marca interna: si queda a true, la carga con GPU falló
+	"ai_enabled": true,
 	"cam_sensitivity": 1.0,
 	"joystick_scale": 1.0,
 	"swap_sides": false,
@@ -77,10 +77,10 @@ func _sanitize(key: String, value: Variant) -> Variant:
 			return bool(value)
 		TYPE_STRING:
 			var s := str(value).strip_edges()
-			if key == "tts_mode" and not s in ["system", "remote", "off"]:
-				return "system"
-			if key == "stt_mode" and not s in ["remote", "off"]:
-				return "remote"
+			if key == "tts_mode" and not s in ["ia", "system", "off"]:
+				return "ia"
+			if key == "llm_size" and not s in ["auto", "normal", "ligero"]:
+				return "auto"
 			if key == "lang" and not s in Loc.LANGS:
 				return "es"
 			return s.substr(0, 300)
@@ -122,6 +122,3 @@ func shadows_enabled() -> bool:
 func ambient_npc_count() -> int:
 	return [3, 5, 7][int(get_value("quality"))]
 
-
-func is_ai_configured() -> bool:
-	return str(get_value("backend_url")).begins_with("http")

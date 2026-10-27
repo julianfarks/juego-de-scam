@@ -1,15 +1,24 @@
 class_name CallSession
 extends Node
-## Orquesta una llamada: estado, reglas, IA remota o diálogo local, cierre de venta
-## autoritativo, tiempo límite y resultado final. No depende de la escena 3D, así que
-## se puede probar en modo headless.
+## Orquesta una llamada.
+##  - Modo "ia": el cliente lo interpreta un modelo de lenguaje LOCAL (NobodyWho) con
+##    su personalidad, su situación y la memoria de la llamada. El modelo devuelve lo
+##    que dice y su juicio (emoción, efecto de la frase, interés, duda, colgar).
+##  - Modo "basico": sin modelo disponible, responde el diálogo por reglas (y la
+##    interfaz lo indica claramente; no se presenta como IA).
+## En ambos modos el reglamento es el árbitro: memoria verificable (cifras,
+## contradicciones, promesas), paciencia, tiempo, y el cierre de la venta y el importe
+## los decide Economy, nunca el modelo.
 
 signal client_spoke(text: String, emotion: String, gesture: String, source: String)
+signal client_partial(text: String)
 signal state_updated
 signal busy_changed(busy: bool)
 signal sale_completed(card: Dictionary, amount: int)
 signal ended(result: Dictionary)
 signal notice(text: String)
+
+const TURN_TIMEOUT_MS := 60000
 
 var st: ConversationState
 var rng := RandomNumberGenerator.new()
@@ -18,15 +27,17 @@ var mods: Dictionary = {}
 var flags: Dictionary = {}
 var busy := false
 var active := false
-var use_remote := true
-var source_last := "local"
-var remote_turns := 0
-var local_turns := 0
+var mode := "basico"
+var chat: Object = null
+var situation := ""
+var ai_turns := 0
+var basic_turns := 0
 var voice_turns := 0
-var _end_pending: Dictionary = {}
+var regenerations := 0
+var last_turn_ms := 0
+var turn_times: Array = []
 var _turn_seq := 0
-var ai_receptive := 0.0
-var player_name := "Novato"
+var _pending_end := ""
 
 
 func start(client_id: String, offer_id: String, p_day: int, p_mods: Dictionary, p_flags: Dictionary = {}, seed_v: int = -1) -> void:
@@ -39,24 +50,40 @@ func start(client_id: String, offer_id: String, p_day: int, p_mods: Dictionary, 
 	flags = p_flags
 	st = ConversationState.new()
 	st.setup(client_id, offer_id, float(flags.get("extra_trust", 0.0)), float(flags.get("extra_patience", 0.0)))
-	st.time_limit = 150.0 * float(flags.get("time_mult", 1.0))
+	st.time_limit = 210.0 * float(flags.get("time_mult", 1.0))
+	situation = Persona.SITUATIONS[rng.randi() % Persona.SITUATIONS.size()]
 	active = true
 	busy = false
-	_end_pending = {}
-	var greet := LocalDialogue.greeting(st, rng)
-	if flags.get("weird_question", false):
-		var q := {"key": "weird", "text": _pick(["Antes de nada: si usted fuera una fruta, ¿cuál sería y por qué?", "Pregunta seria: ¿las cucharas tienen derechos?", "Necesito saberlo ya: ¿cuántos patos caben en un ascensor?"]),
-			"expects": ["joke", "answer", "smalltalk", "drama_hook", "personal"], "turn": 0, "answered": false}
-		st.pending_question = q
-		st.client_questions.append(q)
-		greet += " " + q["text"]
-	st.add_history("client", greet)
-	client_spoke.emit(greet, "neutral", "", "local")
+	var want_ai: bool = flags.get("force_basic", false) == false and Brain.is_ready()
+	if want_ai:
+		_set_busy(true)
+		chat = await Brain.new_chat(Persona.system_prompt(client_id, offer_id, situation), Persona.schema())
+		if chat != null:
+			mode = "ia"
+	if mode == "ia":
+		var opening := "[Suena el teléfono y descuelgas. Saluda a tu manera; aún no sabes quién llama.]"
+		if flags.get("weird_question", false):
+			opening = "[Suena el teléfono y descuelgas. Saluda y suelta enseguida una pregunta rarísima e inesperada al que llama.]"
+		var r := await _ask_ai(opening)
+		_set_busy(false)
+		if not active:
+			return
+		if r.get("ok", false):
+			_emit_ai(r)
+		else:
+			_fallback_greeting()
+	else:
+		_set_busy(false)
+		_fallback_greeting()
 	state_updated.emit()
 
 
-func _pick(arr: Array) -> String:
-	return str(arr[rng.randi() % arr.size()])
+func _fallback_greeting() -> void:
+	mode = "basico" if chat == null else mode
+	var greet := LocalDialogue.greeting(st, rng)
+	st.add_history("client", greet)
+	st.client_lines.append(greet)
+	client_spoke.emit(greet, "neutral", "", "basico")
 
 
 func client() -> Dictionary:
@@ -67,7 +94,8 @@ func personality() -> Dictionary:
 	return PersonalityDB.get_p(st.personality_id)
 
 
-## Turno del jugador (texto o voz transcrita).
+# ------------------------------------------------------------------ Turnos
+
 func player_says(text: String, via_voice := false) -> void:
 	text = text.strip_edges().substr(0, 500)
 	if not active or busy or text == "":
@@ -75,94 +103,226 @@ func player_says(text: String, via_voice := false) -> void:
 	if via_voice:
 		voice_turns += 1
 	st.add_history("player", text)
-	var ctx := {
-		"offer_id": st.offer_id,
-		"pending_question_expects": st.pending_question.get("expects", []),
-		"client_facts": client()["facts"],
-	}
+	var ctx := {"offer_id": st.offer_id, "pending_question_expects": st.pending_question.get("expects", []), "client_facts": client()["facts"]}
 	var analysis := IntentClassifier.analyze(text, ctx)
-	# Pedir la tarjeta = intento de cierre (decidido por las reglas, no por la IA)
 	if IntentClassifier.has(analysis, "ask_payment", 0.5):
-		st.turn += 1
-		attempt_close()
+		await _close_turn(text)
 		return
-	var rules := ConversationRules.apply_turn(st, analysis, rng, mods)
+	var rules := ConversationRules.apply_turn(st, analysis, rng, mods, mode != "ia")
 	state_updated.emit()
-	_turn_seq += 1
-	var my_turn := _turn_seq
-	if use_remote and AI.remote_available() and rules["hangup"] == "":
+	if mode == "ia":
+		var notes := _notes_for(rules)
+		if rules["hangup"] != "":
+			notes.append(_hangup_note(rules["hangup"]))
 		_set_busy(true)
-		var r := await AI.chat(_build_payload(text, analysis, rules))
-		if not active or my_turn != _turn_seq:
-			return
+		var r := await _ask_ai(Persona.turn_message(text, notes))
 		_set_busy(false)
-		if r.get("ok", false):
-			var applied := ConversationRules.merge_ai_deltas(st, r["deltas"])
-			ai_receptive = float(r["receptive"])
-			remote_turns += 1
-			source_last = "remote"
-			st.add_history("client", r["reply"])
-			client_spoke.emit(r["reply"], r["emotion"], r["gesture"], "remote")
-			state_updated.emit()
-			# La IA puede pedir colgar, pero solo si las reglas lo permiten (paciencia baja)
-			if r["hang_up"] and (st.patience < 25.0 or st.suspicion > 80.0):
-				_finish("paciencia" if st.patience < 25.0 else "sospecha")
+		if not active:
 			return
-		if not r.get("cancelled", false):
-			notice.emit("IA remota no disponible (%s). Sigo con el diálogo local." % str(r.get("error", "")).substr(0, 60))
-	_local_reply(analysis, rules)
+		if r.get("ok", false):
+			_emit_ai(r)
+			if rules["hangup"] != "":
+				_finish(rules["hangup"])
+			elif r["cuelga"] and _may_hang_up():
+				_finish("paciencia" if st.patience < 30.0 else "sospecha")
+			return
+		notice.emit("La IA no respondió a tiempo; esta respuesta es del diálogo básico.")
+	_basic_reply(analysis, rules)
 
 
-func _local_reply(analysis: Dictionary, rules: Dictionary) -> void:
+func _basic_reply(analysis: Dictionary, rules: Dictionary) -> void:
 	var resp := LocalDialogue.respond(st, analysis, rules, rng)
-	local_turns += 1
-	source_last = "local"
+	basic_turns += 1
 	st.add_history("client", resp["text"])
-	client_spoke.emit(resp["text"], resp["emotion"], resp["gesture"], "local")
+	st.client_lines.append(resp["text"])
+	client_spoke.emit(resp["text"], resp["emotion"], resp["gesture"], "basico")
 	state_updated.emit()
 	if rules["hangup"] != "":
 		_finish(rules["hangup"])
 
 
-func _build_payload(text: String, analysis: Dictionary, rules: Dictionary) -> Dictionary:
-	var c := client()
-	var p := personality()
-	var o := OfferDB.get_o(st.offer_id)
-	var hist := []
-	for h in st.recent_history(8):
-		hist.append({"role": "vendedor" if h["who"] == "player" else "cliente", "text": String(h["text"]).substr(0, 300)})
-	var detected := []
-	for k in analysis["intents"].keys():
-		detected.append(k)
-	var events := []
-	for e in rules["events"]:
-		events.append(str(e))
-	return {
-		"language": Loc.lang,
-		"client": {
-			"name": c["name"], "personality": st.personality_id, "personality_name": p["name"],
-			"style": p["prompt"], "facts": c["facts"], "quirks": p["quirks"],
-			"example_lines": [p["lines"]["positive"][0], p["lines"]["negative"][0], p["lines"]["quirk"][0]],
-		},
-		"offer": {"name": o["name"], "pitch": o["pitch"], "reference_price": int(o["price"])},
-		"state": st.to_prompt_dict(),
-		"history": hist,
-		"player_text": text,
-		"analysis": {"intents": detected, "numbers": analysis["numbers"], "events": events},
-		"emotion_hint": st.emotion(),
-	}
+## Notas verificables que el juego pasa al modelo en cada turno (memoria fiable).
+func _notes_for(rules: Dictionary) -> Array:
+	var notes := []
+	var events: Array = rules["events"]
+	if events.has("contradiction"):
+		var c: Dictionary = st.contradictions[-1]
+		notes.append("el vendedor dijo antes que costaba %d y ahora dice %d" % [c["a"], c["b"]])
+	elif events.has("price_lowered"):
+		notes.append("el vendedor ha bajado el precio a %d" % st.stated_price)
+	if events.has("promise_overdue"):
+		var pr: Array = st.promises.filter(func(p): return p.get("reminded", false) and not p["fulfilled"])
+		if not pr.is_empty():
+			notes.append("el vendedor prometió «%s» y aún no lo ha cumplido" % String(pr[-1]["text"]).strip_edges())
+	if events.has("greeted_again"):
+		notes.append("el vendedor vuelve a saludar aunque ya os habíais saludado")
+	if st.insults > 0 and IntentClassifier.has(IntentClassifier.analyze(st.history[-1]["text"]), "insult"):
+		notes.append("el vendedor te ha faltado al respeto")
+	if st.patience < 25.0:
+		notes.append("se te está acabando la paciencia")
+	if st.time_limit - st.elapsed < 35.0:
+		notes.append("tienes que colgar muy pronto")
+	if st.stated_price > 0 and not events.has("contradiction") and rng.randf() < 0.25:
+		notes.append("precio dicho por el vendedor: %d" % st.stated_price)
+	return notes
 
 
-## Intento de cierre: la probabilidad y el importe los calcula Economy.
+func _hangup_note(reason: String) -> String:
+	match reason:
+		"insultos":
+			return "estás harto de las faltas de respeto: despídete con enfado y cuelga"
+		"sospecha":
+			return "estás convencido de que te quieren engañar: dilo y cuelga"
+	return "se te ha acabado la paciencia: despídete y cuelga"
+
+
+func _may_hang_up() -> bool:
+	return st.patience < 45.0 or st.suspicion > 60.0 or st.insults > 0 or st.turn >= 12
+
+
+## Pregunta al modelo y valida la respuesta. Evita repeticiones regenerando una vez.
+func _ask_ai(message: String) -> Dictionary:
+	if chat == null:
+		return {"ok": false}
+	_turn_seq += 1
+	var my := _turn_seq
+	var t0 := Time.get_ticks_msec()
+	var raw := await _stream(chat.ask(message), my)
+	if my != _turn_seq or not active:
+		return {"ok": false, "cancelled": true}
+	var r := _parse(raw)
+	if r["ok"] and _is_repeat(r["dice"]) and regenerations < 6:
+		regenerations += 1
+		var hist: Array = await chat.get_chat_history()
+		if hist.size() >= 2 and str(hist[-1].get("role", "")) == "assistant":
+			hist.pop_back()
+			var raw2 := await _stream(chat.complete(hist, {}), my)
+			var r2 := _parse(raw2)
+			if r2["ok"]:
+				r = r2
+	last_turn_ms = Time.get_ticks_msec() - t0
+	turn_times.append(last_turn_ms)
+	Brain.record_turn(last_turn_ms)
+	return r
+
+
+## Lee la respuesta token a token; muestra el texto de «dice» mientras se genera.
+func _stream(stream: Object, my: int) -> String:
+	if stream == null:
+		return ""
+	var out := ""
+	var t0 := Time.get_ticks_msec()
+	while true:
+		var tok = await stream.next_token()
+		if tok == null:
+			break
+		out += str(tok)
+		if my != _turn_seq or not active:
+			chat.stop_generation()
+			return ""
+		var partial := JsonPeek.string_field(out, "dice")
+		if partial != "":
+			client_partial.emit(partial)
+		if Time.get_ticks_msec() - t0 > TURN_TIMEOUT_MS:
+			chat.stop_generation()
+			break
+	return out
+
+
+func _parse(raw: String) -> Dictionary:
+	var j = JSON.parse_string(raw)
+	if not (j is Dictionary):
+		return {"ok": false}
+	var dice := AIResponse.sanitize_text(str(j.get("dice", "")), 300)
+	if dice.length() < 2:
+		return {"ok": false}
+	var emo := str(j.get("emocion", "neutral"))
+	if not Persona.EMOTIONS.has(emo):
+		emo = "neutral"
+	var eff := str(j.get("efecto", "igual"))
+	if not eff in ["mejora", "igual", "empeora"]:
+		eff = "igual"
+	return {"ok": true, "dice": dice, "emocion": emo, "efecto": eff, "interes": clampi(int(j.get("interes", 5)), 0, 10),
+		"duda": AIResponse.sanitize_text(str(j.get("duda", "")), 70), "cuelga": bool(j.get("cuelga", false))}
+
+
+func _is_repeat(text: String) -> bool:
+	var a := _words(text)
+	if a.size() < 4:
+		return false
+	for prev in st.client_lines:
+		var b := _words(prev)
+		var inter := 0
+		for w in a:
+			if b.has(w):
+				inter += 1
+		var union := a.size() + b.size() - inter
+		if union > 0 and float(inter) / union > 0.65:
+			return true
+	return false
+
+
+func _words(t: String) -> Array:
+	var out := []
+	for w in IntentClassifier.normalize(t).strip_edges().split(" ", false):
+		if w.length() > 2 and not out.has(w):
+			out.append(w)
+	return out
+
+
+func _emit_ai(r: Dictionary, apply_judgement := true) -> void:
+	ai_turns += 1
+	if apply_judgement and st.turn > 0:
+		ConversationRules.apply_ai_judgement(st, r["efecto"], r["emocion"], r["interes"], mods)
+	st.ai_doubt = r["duda"]
+	st.add_history("client", r["dice"])
+	st.client_lines.append(r["dice"])
+	var anim: String = Persona.EMOTION_TO_ANIM.get(r["emocion"], "neutral")
+	var gesture := {"risa": "laugh", "sorpresa": "surprised", "confusion": "head_scratch", "enfado": "angry", "desconfianza": "arms_crossed"}.get(r["emocion"], "")
+	if gesture == "":
+		gesture = "nod" if r["efecto"] == "mejora" else ("shake" if r["efecto"] == "empeora" else "")
+	client_spoke.emit(r["dice"], anim, gesture, "ia")
+	state_updated.emit()
+
+
+# ------------------------------------------------------------------ Cierre
+
+## El jugador pide los datos de pago: la decisión la toma Economy (reglas).
 func attempt_close() -> void:
+	await _close_turn("¿Me facilita los datos de pago para completar el pedido?")
+
+
+func _close_turn(player_text: String) -> void:
 	if not active or busy:
 		return
+	st.turn += 1
 	var m := mods.duplicate()
 	m["amount_mult"] = float(m.get("amount_mult", 1.0)) * float(flags.get("amount_extra", 1.0))
-	var res := Economy.attempt_close(st, rng, day, m, ai_receptive * Economy.AI_HINT_MAX)
-	var reply := LocalDialogue.close_reply(st, res["success"], rng)
-	st.add_history("client", reply)
-	client_spoke.emit(reply, "happy" if res["success"] else "distrust", "nod" if res["success"] else "shake", "rules")
+	var res := Economy.attempt_close(st, rng, day, m)
+	state_updated.emit()
+	var said := false
+	if mode == "ia":
+		var why := ""
+		if not res["success"]:
+			if st.ai_doubt != "":
+				why = " (sigue tu duda: %s)" % st.ai_doubt
+			elif st.trust < 40:
+				why = " (no te fías todavía)"
+		var note := "DECISIÓN DEL JUEGO: aceptas pagar. Dilo a tu manera; no digas ningún número" if res["success"] else "DECISIÓN DEL JUEGO: NO aceptas pagar todavía%s. Dilo a tu manera" % why
+		_set_busy(true)
+		var r := await _ask_ai(Persona.turn_message(player_text, ["el vendedor te pide los datos de pago", note]))
+		_set_busy(false)
+		if not active:
+			return
+		if r.get("ok", false):
+			if res["success"]:
+				r["emocion"] = "contento" if r["emocion"] in ["enfado", "desconfianza", "triste"] else r["emocion"]
+			_emit_ai(r, false)
+			said = true
+	if not said:
+		var reply := LocalDialogue.close_reply(st, res["success"], rng)
+		st.add_history("client", reply)
+		client_spoke.emit(reply, "happy" if res["success"] else "distrust", "nod" if res["success"] else "shake", "reglas")
 	state_updated.emit()
 	if res["success"]:
 		sale_completed.emit(res["card"], res["amount"])
@@ -186,14 +346,24 @@ func use_soundboard() -> bool:
 
 
 func tick(delta: float) -> void:
-	if not active:
+	if not active or busy:
 		return
 	var reason := ConversationRules.tick(st, delta, mods)
-	if reason != "" and not busy:
-		var line := PersonalityDB.line(st.personality_id, "hangup", rng) if reason == "paciencia" else "Bueno, se me acabó el tiempo. Ya hablaremos."
-		st.add_history("client", line)
-		client_spoke.emit(line, "angry" if reason == "paciencia" else "neutral", "hangup", "rules")
-		_finish(reason)
+	if reason == "" or _pending_end != "":
+		return
+	_pending_end = reason
+	if mode == "ia":
+		_set_busy(true)
+		var r := await _ask_ai("[Nota del juego: %s.]" % ("se te ha acabado la paciencia: despídete y cuelga" if reason == "paciencia" else "tienes que colgar ya: despídete"))
+		_set_busy(false)
+		if r.get("ok", false) and active:
+			_emit_ai(r, false)
+			_finish(reason)
+			return
+	var line := PersonalityDB.line(st.personality_id, "hangup", rng) if reason == "paciencia" else "Bueno, se me acabó el tiempo. Ya hablaremos."
+	st.add_history("client", line)
+	client_spoke.emit(line, "angry" if reason == "paciencia" else "neutral", "hangup", "reglas")
+	_finish(reason)
 
 
 func player_hangs_up() -> void:
@@ -208,9 +378,9 @@ func interrupt(reason: String) -> void:
 
 func cancel_pending() -> void:
 	_turn_seq += 1
-	if busy:
-		AI.cancel_all()
-		_set_busy(false)
+	if busy and chat:
+		chat.stop_generation()
+	_set_busy(false)
 
 
 func _set_busy(b: bool) -> void:
@@ -223,23 +393,28 @@ func _finish(reason: String, amount := 0, card: Dictionary = {}) -> void:
 		return
 	active = false
 	_turn_seq += 1
-	if busy:
-		AI.cancel_all()
+	if busy and chat:
+		chat.stop_generation()
 		_set_busy(false)
 	var outcome := Economy.classify_end(st, reason)
 	st.ended = true
 	st.outcome = outcome
 	var c := client()
+	var avg := 0
+	for t in turn_times:
+		avg += int(t)
+	avg = avg / maxi(1, turn_times.size())
 	var result := {
 		"client_id": st.client_id, "client_name": c["name"], "personality": st.personality_id,
 		"offer_id": st.offer_id, "offer_name": OfferDB.get_o(st.offer_id)["name"],
 		"outcome": outcome, "outcome_text": Economy.OUTCOMES[outcome], "reason": reason,
 		"amount": amount if outcome == "success" else 0, "card": card,
 		"duration": int(st.elapsed), "turns": st.turn,
-		"objections_resolved": st.resolved_objections.size(), "objections_pending": st.pending_objections.size(),
+		"objections_resolved": st.resolved_objections.size(), "objections_pending": st.pending_objections.size() + (1 if st.ai_doubt != "" else 0),
 		"contradictions": st.contradictions.size(), "voice_turns": voice_turns,
-		"remote_turns": remote_turns, "local_turns": local_turns,
+		"ai_turns": ai_turns, "basic_turns": basic_turns, "mode": mode, "avg_turn_ms": avg,
 		"comment": BossLines.call_comment(st, outcome, amount, rng),
 		"final_state": st.to_prompt_dict(),
 	}
+	chat = null
 	ended.emit(result)

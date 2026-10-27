@@ -41,10 +41,8 @@ func open() -> void:
 func _evaluate() -> void:
 	var stats := Game.day_stats_preview()
 	var comment := ""
-	if AI.remote_available():
-		var r := await AI.boss_comment(stats)
-		if r.get("ok", false):
-			comment = r["comment"]
+	if Brain.is_ready():
+		comment = await Brain.boss_comment(stats)
 	var rep := Game.end_day(comment)
 	_show(rep, comment != "")
 
@@ -67,7 +65,7 @@ func _show(rep: Dictionary, from_ai: bool) -> void:
 	var cp := UIKit.panel(Color("4a235a"), 16, 14)
 	var cv := UIKit.vbox(4)
 	cp.add_child(cv)
-	cv.add_child(UIKit.label("Don Ramiro Billetes" + ("  (IA remota)" if from_ai else "  (comentario local)"), 18, UIKit.C_MUTED))
+	cv.add_child(UIKit.label("Don Ramiro Billetes" + ("  (IA local)" if from_ai else "  (frase predefinida)"), 18, UIKit.C_MUTED))
 	comment_label = UIKit.label("", 23, Color("f9e79f"))
 	cv.add_child(comment_label)
 	box.add_child(cp)

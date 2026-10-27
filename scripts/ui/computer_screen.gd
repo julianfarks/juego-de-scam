@@ -254,8 +254,7 @@ func _app_stats() -> void:
 		var got: bool = Save.data["achievements"].has(id)
 		var a: Dictionary = AchievementDB.ACHIEVEMENTS[id]
 		b.add_child(_dark(("[X] " if got else "[  ] ") + a["name"] + " — " + a["desc"], 18, Color("1e8449") if got else Color("777777")))
-	var u: Dictionary = AI.usage
-	b.add_child(_dark("Consumo de IA en esta sesión: %d peticiones, %d tokens de entrada, %d de salida, %.0f s de audio transcrito, %d caracteres de voz." % [u["requests"], u["input_tokens"], u["output_tokens"], u["stt_seconds"], u["tts_chars"]], 17, Color("555555")))
+	b.add_child(_dark("IA: %s. Respuestas generadas en esta sesión: %d (media %.1f s). Todo se calcula en el móvil, sin conexión." % [Brain.status_text(), Brain.turns_total, Brain.avg_turn_seconds()], 17, Color("555555")))
 
 
 func _app_goals() -> void:

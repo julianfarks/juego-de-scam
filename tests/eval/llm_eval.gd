@@ -14,7 +14,7 @@ func _initialize() -> void:
 	var t0 := Time.get_ticks_msec()
 	var model = await ClassDB.class_call_static("NobodyWhoModel", "create", model_path, {"use_gpu": false})
 	print("Modelo cargado en %d ms" % (Time.get_ticks_msec() - t0))
-	var sampler = NobodyWhoSamplerBuilder.new().json_schema(Persona.schema()).dry(0.8, 1.75, 2, 256, ["\n", ":", "\"", "*"]).temperature(0.8).top_p(0.92, 1).dist()
+	var sampler = NobodyWhoSamplerBuilder.new().json_schema(JSON.stringify(Persona.schema())).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(0.8).top_p(0.92, 1).dist()
 	var sys := Persona.system_prompt(client, offer, Persona.SITUATIONS[0])
 	var chat = await ClassDB.class_call_static("NobodyWhoChat", "create", model, {"system_prompt": sys, "n_ctx": 4096, "sampler": sampler, "template_variables": {"enable_thinking": false}, "n_threads": 2})
 	print("CLIENTE: ", ClientDB.get_c(client)["name"], " (", ClientDB.get_c(client)["personality"], ")")

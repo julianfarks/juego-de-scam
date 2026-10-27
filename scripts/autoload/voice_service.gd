@@ -1,7 +1,10 @@
 extends Node
-## Micrófono (grabación + transcripción remota) y voces de los personajes
-## (TTS del sistema Android, TTS remoto opcional, o simulación sin voz).
-## El micrófono SOLO graba mientras el jugador lo activa explícitamente.
+## Voz LOCAL en español, sin servidores:
+##  - Micrófono → detección de voz (Silero VAD) → transcripción (Whisper) en el móvil.
+##  - Voces de los clientes con Kokoro (síntesis neuronal en el móvil), con tono
+##    distinto por personaje. Si los modelos de voz no están, se usa la voz del sistema
+##    Android y la interfaz lo indica (no se presenta como voz generativa).
+## El micrófono SOLO graba mientras el jugador lo activa.
 
 signal mic_state_changed(state: String)  # ready | listening | transcribing | processing | speaking | error | offline
 signal transcription_ready(text: String)
@@ -10,27 +13,29 @@ signal speech_started(speaker: String)
 signal speech_finished(speaker: String)
 signal permission_result(granted: bool)
 
-const MAX_RECORD_S := 20.0
-const SILENCE_STOP_S := 1.6
-const SPEECH_LEVEL := 0.06
+const MAX_RECORD_S := 25.0
+const RATE := 16000
 
 var mic_state := "ready"
-var _mic_player: AudioStreamPlayer
-var _mic_spectrum: AudioEffectSpectrumAnalyzerInstance
-var _record_time := 0.0
-var _silence_time := 0.0
-var _heard_speech := false
 var mic_level := 0.0
+var _mic_player: AudioStreamPlayer
+var _capture: AudioEffectCapture
+var _vad: Object = null
+var _raw := PackedByteArray()
+var _record_time := 0.0
+var _heard_speech := false
+var _resample_acc := 0.0
 
-var _tts_voices: Array = []
-var _utterance_id := 0
+var _player: AudioStreamPlayer
+var _queue: Array = []              # AudioStreamWAV pendientes de la frase actual
 var _speaking := false
+var _speak_mode := ""               # ia | sistema | silencio
 var _speak_end_time := 0.0
-var _speak_mode := ""
-var _boundary_pulse := 0.0
-var _remote_player: AudioStreamPlayer
-var current_speaker := ""
 var _speech_token := 0
+var _utterance_id := 0
+var _tts_voices: Array = []
+var current_speaker := ""
+var last_tts_engine := ""
 
 
 func _ready() -> void:
@@ -39,77 +44,60 @@ func _ready() -> void:
 	_mic_player.stream = AudioStreamMicrophone.new()
 	_mic_player.bus = "Mic"
 	add_child(_mic_player)
-	var mic_idx := AudioServer.get_bus_index("Mic")
-	var an := AudioEffectSpectrumAnalyzer.new()
-	an.buffer_length = 0.1
-	AudioServer.add_bus_effect(mic_idx, an)
-	_mic_spectrum = AudioServer.get_bus_effect_instance(mic_idx, AudioServer.get_bus_effect_count(mic_idx) - 1) as AudioEffectSpectrumAnalyzerInstance
-	_remote_player = AudioStreamPlayer.new()
-	_remote_player.bus = "Voice"
-	add_child(_remote_player)
-	_remote_player.finished.connect(_on_speech_done.bind(-1))
-	_init_tts()
+	_capture = Audio.capture_effect
+	_player = AudioStreamPlayer.new()
+	_player.bus = "Voice"
+	add_child(_player)
+	_player.finished.connect(_on_chunk_finished)
+	if DisplayServer.get_name() != "headless":
+		_tts_voices = DisplayServer.tts_get_voices_for_language("es")
+		DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, _on_tts_end)
+		DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, _on_tts_end)
 	if get_tree().has_signal("on_request_permissions_result"):
 		get_tree().on_request_permissions_result.connect(_on_permission)
 
 
-# ------------------------------------------------------------------ TTS
+# ------------------------------------------------------------------ Estado
 
-func _init_tts() -> void:
-	if DisplayServer.get_name() == "headless":
-		return
-	_tts_voices = DisplayServer.tts_get_voices_for_language("es")
-	if _tts_voices.is_empty():
-		_tts_voices = DisplayServer.tts_get_voices_for_language("spa")
-	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_ENDED, _on_tts_end)
-	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_CANCELED, _on_tts_end)
-	DisplayServer.tts_set_utterance_callback(DisplayServer.TTS_UTTERANCE_BOUNDARY, _on_tts_boundary)
+func neural_voice_ready() -> bool:
+	return Brain.voice_state == "ready" and str(Settings.get_value("tts_mode")) == "ia"
 
 
-func system_tts_available() -> bool:
-	return not _tts_voices.is_empty()
+func stt_available() -> bool:
+	return Brain.voice_state == "ready" and Brain.stt != null
 
 
-## ¿Se oirá realmente la voz del cliente con los ajustes actuales?
 func can_speak() -> bool:
 	var mode := str(Settings.get_value("tts_mode"))
 	if mode == "off":
 		return false
-	if mode == "remote" and AI.remote_available():
-		return true
-	return system_tts_available()
+	return neural_voice_ready() or not _tts_voices.is_empty()
 
 
 func tts_status_text() -> String:
-	match str(Settings.get_value("tts_mode")):
-		"off":
-			return "Voces desactivadas (solo subtítulos)"
-		"remote":
-			return "Voz remota (servidor IA)" if Settings.is_ai_configured() else "Voz remota sin servidor: se usará la del sistema"
-	if system_tts_available():
-		return "Voz del sistema (%d voces en español)" % _tts_voices.size()
-	return "Este dispositivo no ofrece voces en español: solo subtítulos"
+	if str(Settings.get_value("tts_mode")) == "off":
+		return "Voces desactivadas (solo subtítulos)"
+	if neural_voice_ready():
+		return "Voces neuronales en el móvil (Kokoro)"
+	if Brain.voice_state in ["missing", "downloading", "error"]:
+		return "Voces neuronales sin descargar: se usa la voz del sistema" if not _tts_voices.is_empty() else "Sin voces disponibles: solo subtítulos"
+	return "Voz del sistema Android" if not _tts_voices.is_empty() else "Sin voces disponibles: solo subtítulos"
 
 
-## Elige una voz del sistema estable por personaje.
-func _pick_voice(profile: Dictionary) -> String:
-	if _tts_voices.is_empty():
-		return ""
-	var want_f: bool = profile.get("gender", "m") == "f"
-	var candidates := []
-	for v in _tts_voices:
-		var n := str(v.get("name", "")).to_lower() + " " + str(v.get("id", "")).to_lower()
-		var is_f := "female" in n or "mujer" in n or "-f" in n
-		var is_m := "male" in n and not "female" in n
-		if (want_f and is_f) or (not want_f and is_m):
-			candidates.append(v)
-	if candidates.is_empty():
-		candidates = _tts_voices
-	var h := absi(hash(str(profile.get("id", ""))))
-	return str(candidates[h % candidates.size()]["id"])
+func stt_status_text() -> String:
+	match Brain.voice_state:
+		"ready":
+			return "Reconocimiento de voz en el móvil (Whisper)"
+		"loading":
+			return "Cargando reconocimiento de voz…"
+		"unsupported":
+			return "Reconocimiento de voz no disponible en esta plataforma"
+	return "Reconocimiento de voz sin descargar: usa el modo texto"
 
 
-## Habla un texto con el perfil de voz del personaje. Devuelve inmediatamente.
+# ------------------------------------------------------------------ Hablar
+
+## Habla con la voz del personaje. profile: {id, female, variant, speed, pitch}
 func speak(text: String, profile: Dictionary) -> void:
 	stop_speaking()
 	_speech_token += 1
@@ -119,49 +107,82 @@ func speak(text: String, profile: Dictionary) -> void:
 	_set_mic_state("speaking")
 	speech_started.emit(current_speaker)
 	Audio.duck_music(true)
-	var rate := clampf(float(profile.get("rate", 1.0)) * float(Settings.get_value("voice_speed")), 0.5, 2.0)
 	var mode := str(Settings.get_value("tts_mode"))
-	if mode == "remote" and AI.remote_available():
-		_speak_mode = "remote"
-		var r := await AI.synthesize(text, str(profile.get("remote_voice", "alloy")), str(profile.get("instructions", "")))
+	if mode == "ia" and neural_voice_ready():
+		_speak_mode = "ia"
+		var voice := "ef_dora" if profile.get("female", false) else "em_alex"
+		var engine: Object = await Brain.get_tts(voice)
 		if token != _speech_token:
 			return
-		if r["ok"]:
-			var mp3 := AudioStreamMP3.new()
-			mp3.data = r["bytes"]
-			if mp3.get_length() > 0.05:
-				_remote_player.stream = mp3
-				_remote_player.pitch_scale = 1.0
-				_remote_player.play()
-				_speak_end_time = Time.get_ticks_msec() / 1000.0 + mp3.get_length() + 0.5
-				return
-		mode = "system"
-	if mode != "off" and system_tts_available():
-		_speak_mode = "system"
+		if engine != null:
+			last_tts_engine = "kokoro:" + voice
+			_player.pitch_scale = clampf(float(profile.get("pitch", 1.0)), 0.8, 1.25)
+			var sentences := _split_sentences(text)
+			var first := true
+			for s in sentences:
+				var wav: PackedByteArray = await engine.synthesize(s)
+				if token != _speech_token:
+					return
+				var stream := AudioStreamWAV.load_from_buffer(wav) if wav.size() > 100 else null
+				if stream == null:
+					continue
+				if first and not _player.playing:
+					_player.stream = stream
+					_player.play()
+					first = false
+				else:
+					_queue.append(stream)
+			if not _player.playing and _queue.is_empty():
+				_on_speech_done()
+			return
+	if mode != "off" and not _tts_voices.is_empty():
+		_speak_mode = "sistema"
+		last_tts_engine = "sistema"
 		_utterance_id += 1
-		var pitch := clampf(float(profile.get("pitch", 1.0)), 0.5, 2.0)
 		var vol := int(clampf(float(Settings.get_value("vol_voice")) * float(Settings.get_value("vol_master")), 0.0, 1.0) * 100.0)
-		DisplayServer.tts_speak(text, _pick_voice(profile), vol, pitch, rate, _utterance_id, true)
-		# Respaldo por si el sistema no informa del final
-		_speak_end_time = Time.get_ticks_msec() / 1000.0 + estimate_duration(text, rate) * 1.8 + 2.0
+		var v := str(_tts_voices[absi(hash(current_speaker)) % _tts_voices.size()]["id"])
+		DisplayServer.tts_speak(text, v, vol, clampf(float(profile.get("pitch", 1.0)), 0.5, 2.0), clampf(float(profile.get("speed", 1.0)), 0.5, 2.0), _utterance_id, true)
+		_speak_end_time = Time.get_ticks_msec() / 1000.0 + estimate_duration(text) * 1.8 + 2.0
 		return
-	# Sin voz: simulamos la duración para animar la boca y los subtítulos
-	_speak_mode = "silent"
-	_speak_end_time = Time.get_ticks_msec() / 1000.0 + estimate_duration(text, rate)
+	_speak_mode = "silencio"
+	last_tts_engine = "ninguna"
+	_speak_end_time = Time.get_ticks_msec() / 1000.0 + estimate_duration(text)
 
 
-func estimate_duration(text: String, rate := 1.0) -> float:
-	return clampf(text.length() / (14.5 * rate), 0.8, 14.0)
+func _split_sentences(text: String) -> Array:
+	var out := []
+	var cur := ""
+	for ch in text:
+		cur += ch
+		if ch in [".", "!", "?", "…"] and cur.strip_edges().length() > 12:
+			out.append(cur.strip_edges())
+			cur = ""
+	if cur.strip_edges() != "":
+		out.append(cur.strip_edges())
+	return out
+
+
+func _on_chunk_finished() -> void:
+	if not _queue.is_empty():
+		_player.stream = _queue.pop_front()
+		_player.play()
+	elif _speak_mode == "ia":
+		_on_speech_done()
+
+
+func estimate_duration(text: String) -> float:
+	return clampf(text.length() / 14.5, 0.8, 14.0)
 
 
 func stop_speaking() -> void:
+	_speech_token += 1
+	_queue.clear()
 	if not _speaking:
 		return
-	_speech_token += 1
-	if _speak_mode == "system" and DisplayServer.get_name() != "headless":
+	if _speak_mode == "sistema" and DisplayServer.get_name() != "headless":
 		DisplayServer.tts_stop()
-	_remote_player.stop()
-	_on_speech_done(-2)
+	_player.stop()
+	_on_speech_done()
 
 
 func is_speaking() -> bool:
@@ -170,59 +191,42 @@ func is_speaking() -> bool:
 
 func _on_tts_end(id: int) -> void:
 	if id == _utterance_id:
-		call_deferred("_on_speech_done", id)
+		call_deferred("_on_speech_done")
 
 
-func _on_tts_boundary(_pos: int, id: int) -> void:
-	if id == _utterance_id:
-		_boundary_pulse = 1.0
-
-
-func _on_speech_done(_id: int) -> void:
+func _on_speech_done() -> void:
 	if not _speaking:
 		return
 	_speaking = false
 	Audio.duck_music(false)
-	var who := current_speaker
 	if mic_state == "speaking":
 		_set_mic_state("ready")
-	speech_finished.emit(who)
+	speech_finished.emit(current_speaker)
 
 
-## Apertura de boca 0..1 para el personaje que habla.
+## Apertura de la boca (0..1) del personaje que habla.
 func mouth_open(t: float) -> float:
 	if not _speaking:
 		return 0.0
-	match _speak_mode:
-		"remote":
-			return Audio.voice_level()
-		"system":
-			_boundary_pulse = maxf(0.0, _boundary_pulse - get_process_delta_time() * 4.0)
-			return clampf(0.25 + 0.45 * absf(sin(t * 13.0)) * (0.6 + 0.4 * sin(t * 3.1)) + _boundary_pulse * 0.3, 0.0, 1.0)
+	if _speak_mode == "ia":
+		return Audio.voice_level()
 	return clampf(0.2 + 0.6 * absf(sin(t * 12.0)) * (0.5 + 0.5 * sin(t * 2.7)), 0.0, 1.0)
 
 
 # ------------------------------------------------------------------ Micrófono
 
-func stt_available() -> bool:
-	return str(Settings.get_value("stt_mode")) == "remote" and Settings.is_ai_configured() and AI.remote_available()
-
-
 func request_mic_permission() -> void:
 	if OS.get_name() != "Android":
 		permission_result.emit(true)
 		return
-	var granted := OS.get_granted_permissions()
-	if "android.permission.RECORD_AUDIO" in granted:
+	if "android.permission.RECORD_AUDIO" in OS.get_granted_permissions():
 		permission_result.emit(true)
 		return
 	OS.request_permission("android.permission.RECORD_AUDIO")
 
 
 func has_mic_permission() -> bool:
-	if OS.get_name() != "Android":
-		return true
-	return "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
+	return OS.get_name() != "Android" or "android.permission.RECORD_AUDIO" in OS.get_granted_permissions()
 
 
 func _on_permission(permission: String, granted: bool) -> void:
@@ -238,16 +242,17 @@ func start_listening() -> bool:
 		return false
 	if not has_mic_permission():
 		request_mic_permission()
-		_set_mic_state("error")
-		transcription_failed.emit("Necesito permiso de micrófono. Acéptalo y vuelve a pulsar.")
+		_fail("Necesito permiso de micrófono. Acéptalo y vuelve a pulsar.")
 		return false
 	stop_speaking()
+	_vad = await Brain.new_vad()
+	_raw = PackedByteArray()
 	_record_time = 0.0
-	_silence_time = 0.0
 	_heard_speech = false
+	_resample_acc = 0.0
+	_capture.clear_buffer()
 	if not _mic_player.playing:
 		_mic_player.play()
-	Audio.record_effect.set_recording_active(true)
 	_set_mic_state("listening")
 	return true
 
@@ -255,34 +260,67 @@ func start_listening() -> bool:
 func cancel_listening() -> void:
 	if mic_state != "listening":
 		return
-	Audio.record_effect.set_recording_active(false)
 	_mic_player.stop()
+	_vad = null
 	_set_mic_state("ready")
 
 
 func stop_listening() -> void:
 	if mic_state != "listening":
 		return
-	var rec: AudioStreamWAV = Audio.record_effect.get_recording()
-	Audio.record_effect.set_recording_active(false)
+	_drain_capture()
 	_mic_player.stop()
-	if rec == null:
-		_fail("No se grabó audio")
-		return
-	var pcm := WavUtil.to_mono_16k_pcm(rec)
-	if WavUtil.duration_s(pcm) < 0.4 or WavUtil.peak(pcm) < 0.015:
-		_fail("No te he oído. Acerca el micrófono e inténtalo otra vez.")
+	var speech := PackedByteArray()
+	if _vad != null:
+		speech = _vad.finish()
+	_vad = null
+	if speech.size() < RATE * 2 * 0.3:
+		speech = _raw  # el jugador paró antes de que el detector cerrara el tramo
+	if speech.size() < RATE * 2 * 0.4 or WavUtil.peak(speech) < 0.02:
+		_fail("No te he oído. Acércate al micrófono e inténtalo otra vez.")
 		return
 	_set_mic_state("transcribing")
-	var r := await AI.transcribe(WavUtil.wrap_wav(pcm, 16000), Loc.lang)
+	var text: String = await Brain.stt.transcribe_pcm(speech, RATE)
 	if mic_state != "transcribing":
-		return  # cancelado mientras tanto
-	if r["ok"]:
-		_set_mic_state("processing")
-		Save.stat_add("voice_turns")
-		transcription_ready.emit(r["text"])
-	else:
-		_fail(str(r.get("error", "Error de transcripción")))
+		return
+	text = text.strip_edges()
+	if text.length() < 2 or text in ["[BLANK_AUDIO]", "(silencio)"]:
+		_fail("No he entendido lo que dijiste. Repítelo, por favor.")
+		return
+	_set_mic_state("processing")
+	Save.stat_add("voice_turns")
+	transcription_ready.emit(text)
+
+
+## Lee lo capturado del micrófono, lo pasa a 16 kHz mono y lo da al detector de voz.
+func _drain_capture() -> void:
+	var n := _capture.get_frames_available()
+	if n <= 0:
+		return
+	var frames := _capture.get_buffer(n)
+	var step := float(AudioServer.get_mix_rate()) / RATE
+	var chunk := PackedByteArray()
+	chunk.resize(int(frames.size() / step + 2) * 2)
+	var count := 0
+	var peak := 0.0
+	var pos := _resample_acc
+	while pos < frames.size():
+		var f: Vector2 = frames[int(pos)]
+		var v := clampf((f.x + f.y) * 0.5, -1.0, 1.0)
+		peak = maxf(peak, absf(v))
+		chunk.encode_s16(count * 2, int(v * 32767.0))
+		count += 1
+		pos += step
+	_resample_acc = pos - frames.size()
+	chunk.resize(count * 2)
+	_raw.append_array(chunk)
+	mic_level = lerpf(mic_level, clampf(peak * 3.0, 0.0, 1.0), 0.5)
+	if _vad != null and chunk.size() > 0:
+		var ev: String = _vad.push(chunk)
+		if ev in ["speech_started", "speech"]:
+			_heard_speech = true
+		if ev == "speech_ended" and _heard_speech and Settings.get_value("vad_auto_stop"):
+			call_deferred("stop_listening")
 
 
 func _fail(reason: String) -> void:
@@ -309,30 +347,19 @@ func _set_mic_state(s: String) -> void:
 
 
 func _process(delta: float) -> void:
-	if _speaking and Time.get_ticks_msec() / 1000.0 > _speak_end_time and not _remote_player.playing:
-		if _speak_mode != "system" or not DisplayServer.tts_is_speaking():
-			_on_speech_done(-3)
+	if _speaking and _speak_mode != "ia" and Time.get_ticks_msec() / 1000.0 > _speak_end_time:
+		if _speak_mode != "sistema" or not DisplayServer.tts_is_speaking():
+			_on_speech_done()
 	if mic_state != "listening":
 		mic_level = lerpf(mic_level, 0.0, delta * 8.0)
 		return
 	_record_time += delta
-	var m := Vector2.ZERO
-	if _mic_spectrum:
-		m = _mic_spectrum.get_magnitude_for_frequency_range(100.0, 4000.0)
-	mic_level = clampf((m.x + m.y) * 25.0, 0.0, 1.0)
-	if mic_level > SPEECH_LEVEL:
-		_heard_speech = true
-		_silence_time = 0.0
-	else:
-		_silence_time += delta
+	_drain_capture()
 	if _record_time >= MAX_RECORD_S:
-		stop_listening()
-	elif Settings.get_value("vad_auto_stop") and _heard_speech and _silence_time >= SILENCE_STOP_S:
 		stop_listening()
 
 
 func _notification(what: int) -> void:
-	# Si la app pasa a segundo plano (p. ej. entra una llamada real), se suelta el micrófono
 	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if mic_state == "listening":
 			cancel_listening()

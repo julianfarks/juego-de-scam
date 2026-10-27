@@ -24,7 +24,7 @@ Settings="*res://scripts/autoload/settings.gd"
 Save="*res://scripts/autoload/save_system.gd"
 Audio="*res://scripts/autoload/audio_manager.gd"
 Game="*res://scripts/autoload/game_state.gd"
-AI="*res://scripts/autoload/ai_service.gd"
+Brain="*res://scripts/autoload/brain.gd"
 Voice="*res://scripts/autoload/voice_service.gd"
 
 [display]

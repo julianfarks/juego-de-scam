@@ -43,7 +43,10 @@ const DISLIKE_PENALTY := [-4, -5, -2, 0, 4]
 
 ## Aplica las reglas de un turno del jugador. mods = modificadores de mejoras.
 ## Devuelve {deltas:{...}, events:[...], hangup:"" | motivo}
-static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGenerator, mods: Dictionary = {}) -> Dictionary:
+## emotional = false: modo IA. El modelo de lenguaje juzga el SIGNIFICADO de la frase
+## (ver apply_ai_judgement); aquí solo se lleva la memoria verificable (cifras,
+## contradicciones, promesas, insultos) y el desgaste de paciencia.
+static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGenerator, mods: Dictionary = {}, emotional := true) -> Dictionary:
 	var p := PersonalityDB.get_p(st.personality_id)
 	var mult: Dictionary = p["mult"]
 	var d := {"trust": 0.0, "patience": 0.0, "humor": 0.0, "understanding": 0.0, "suspicion": 0.0}
@@ -51,7 +54,7 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 	var intents: Dictionary = a["intents"]
 	st.turn += 1
 
-	for intent in intents.keys():
+	for intent in (intents.keys() if emotional else []):
 		if not INTENT_DELTAS.has(intent):
 			continue
 		var w: float = intents[intent]
@@ -75,7 +78,8 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 		if disliked:
 			events.append("disliked:" + intent)
 
-	_apply_quirks(st, a, p, d, events, rng)
+	if emotional:
+		_apply_quirks(st, a, p, d, events, rng)
 
 	# Saludar a mitad de la llamada no tiene sentido
 	if intents.has("greeting"):
@@ -96,7 +100,7 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 	else:
 		st.same_intent_streak = 0
 	st.last_top_intent = a["top"]
-	if st.same_intent_streak >= 2:
+	if st.same_intent_streak >= 2 and emotional:
 		d["patience"] -= 5
 		d["trust"] -= 2
 		events.append("repetition")
@@ -107,7 +111,7 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 		if intents.has(k):
 			on_topic = true
 	st.off_topic_streak = 0 if on_topic else st.off_topic_streak + 1
-	if st.off_topic_streak >= 3 and not PersonalityDB.has_quirk(st.personality_id, "topic_changer") and not PersonalityDB.has_quirk(st.personality_id, "rambles"):
+	if emotional and st.off_topic_streak >= 3 and not PersonalityDB.has_quirk(st.personality_id, "topic_changer") and not PersonalityDB.has_quirk(st.personality_id, "rambles"):
 		d["patience"] -= 3
 		events.append("off_topic")
 
@@ -116,9 +120,10 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 	# Promesas
 	_track_promises(st, a, d, events)
 	# Objeciones: resolución y aparición
-	_track_objections(st, a, p, d, events, rng)
-	# Pregunta pendiente del cliente
-	if not st.pending_question.is_empty():
+	if emotional:
+		_track_objections(st, a, p, d, events, rng)
+	# Pregunta pendiente del cliente (en modo IA la sigue el propio modelo)
+	if emotional and not st.pending_question.is_empty():
 		if intents.has("answer") and float(intents["answer"]) >= 0.8:
 			st.pending_question["answered"] = true
 			st.pending_question = {}
@@ -285,6 +290,45 @@ static func _track_objections(st: ConversationState, a: Dictionary, p: Dictionar
 				st.pending_objections.append(o)
 				st.raised_count += 1
 				events.append("objection_raised:" + o)
+
+
+## Juicio del modelo de lenguaje sobre la última frase del jugador → cambios de
+## estado ACOTADOS y modulados por la personalidad. Devuelve los cambios aplicados.
+const AI_EFFECT := {
+	"mejora": {"trust": 7.0, "patience": 1.0, "humor": 2.0, "understanding": 5.0, "suspicion": -4.0},
+	"igual": {"trust": 0.0, "patience": -1.5, "humor": 0.0, "understanding": 1.0, "suspicion": 0.5},
+	"empeora": {"trust": -7.0, "patience": -6.0, "humor": -3.0, "understanding": -1.0, "suspicion": 7.0},
+}
+const AI_EMOTION := {
+	"risa": {"humor": 6.0}, "contento": {"humor": 2.0}, "enfado": {"patience": -4.0}, "confusion": {"understanding": -4.0},
+	"desconfianza": {"suspicion": 4.0}, "triste": {"humor": -3.0},
+}
+
+
+static func apply_ai_judgement(st: ConversationState, effect: String, emotion: String, interest: int, mods: Dictionary = {}) -> Dictionary:
+	var p := PersonalityDB.get_p(st.personality_id)
+	var mult: Dictionary = p["mult"]
+	var d: Dictionary = AI_EFFECT.get(effect, AI_EFFECT["igual"]).duplicate()
+	var em: Dictionary = AI_EMOTION.get(emotion, {})
+	for k in em.keys():
+		d[k] = float(d.get(k, 0.0)) + float(em[k])
+	if d["trust"] > 0.0:
+		d["trust"] *= float(mult["trust_gain"]) * float(mods.get("trust_mult", 1.0))
+	if d["suspicion"] > 0.0:
+		d["suspicion"] *= float(mult["suspicion_gain"])
+	if d["understanding"] > 0.0:
+		d["understanding"] *= float(mult["understanding_gain"]) * float(mods.get("understanding_mult", 1.0))
+	if d["patience"] < 0.0:
+		d["patience"] *= float(mult["patience_drain"])
+	for k in KEYS:
+		st.set(k, float(st.get(k)) + float(d.get(k, 0.0)))
+	st.ai_interest = clampi(interest, 0, 10)
+	st.ai_history.append(effect)
+	if effect != "empeora" and (st.understanding >= 40 or st.turn >= 3):
+		st.offer_explained = st.offer_explained or st.understanding >= 40
+	st.clamp_all()
+	st.update_provisional()
+	return d
 
 
 ## Integra ajustes sugeridos por la IA remota: acotados y con peso parcial.

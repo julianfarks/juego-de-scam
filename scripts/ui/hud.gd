@@ -40,7 +40,8 @@ func _ready() -> void:
 	Game.notify.connect(toast)
 	Game.event_started.connect(func(_id: String) -> void: _refresh_event())
 	Game.event_ended.connect(func(_id: String) -> void: _refresh_event())
-	AI.status_changed.connect(func(_s: String) -> void: _refresh_ai())
+	Brain.state_changed.connect(_refresh_ai)
+	Brain.download_progress.connect(func(_d: int, _t: int, _l: String) -> void: _refresh_ai())
 	refresh()
 	_refresh_ai()
 
@@ -67,8 +68,8 @@ func _build_top() -> void:
 	quota_bar = UIKit.bar(0, 100, UIKit.C_GOOD, 18)
 	qv.add_child(quota_bar)
 	h.add_child(qv)
-	ai_pill = UIKit.label("", 18, UIKit.C_MUTED)
-	ai_pill.custom_minimum_size = Vector2(190, 0)
+	ai_pill = UIKit.label("", 17, UIKit.C_MUTED)
+	ai_pill.custom_minimum_size = Vector2(230, 0)
 	h.add_child(ai_pill)
 	end_btn = UIKit.button("Fin", func() -> void: end_day_pressed.emit(), UIKit.C_PANEL2, 54, 22)
 	end_btn.custom_minimum_size = Vector2(80, 54)
@@ -225,20 +226,20 @@ func refresh() -> void:
 
 
 func _refresh_ai() -> void:
-	match AI.status:
-		"online":
-			ai_pill.text = "IA remota: conectada"
-			ai_pill.add_theme_color_override("font_color", UIKit.C_GOOD)
-		"connecting":
-			ai_pill.text = "IA remota: conectando…"
-			ai_pill.add_theme_color_override("font_color", UIKit.C_ACCENT)
-		"unconfigured":
-			ai_pill.text = "Diálogo local\n(IA no configurada)"
-			ai_pill.add_theme_color_override("font_color", UIKit.C_MUTED)
+	var col := UIKit.C_MUTED
+	var txt := Brain.status_text()
+	match Brain.llm_state:
+		"ready":
+			col = UIKit.C_GOOD
+		"loading":
+			col = UIKit.C_ACCENT
+		"downloading":
+			col = UIKit.C_ACCENT
+			txt = "Descargando IA: %d %%" % int(Brain.download_percent())
 		_:
-			ai_pill.text = "IA sin conexión:\ndiálogo local"
-			ai_pill.add_theme_color_override("font_color", Color("ff9f43"))
-
+			col = Color("ff9f43")
+	ai_pill.text = txt
+	ai_pill.add_theme_color_override("font_color", col)
 
 func _refresh_event() -> void:
 	if Game.active_event == "":

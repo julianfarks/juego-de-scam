@@ -36,6 +36,10 @@ var _downloader: Downloader
 var available := false              # ¿está la extensión NobodyWho en esta plataforma?
 var gpu_used := false
 var load_ms := 0
+var turns_total := 0
+var turn_ms_total := 0
+var _dl_done := 0
+var _dl_total := 0
 
 
 func _ready() -> void:
@@ -138,7 +142,10 @@ func download_all() -> bool:
 		var p: Dictionary = PACKS[id]
 		_downloader = Downloader.new()
 		var base := done_before
-		_downloader.progress.connect(func(d: int, _t: int) -> void: download_progress.emit(base + d, total, p["label"]))
+		_downloader.progress.connect(func(d: int, _t: int) -> void:
+			_dl_done = base + d
+			_dl_total = total
+			download_progress.emit(base + d, total, p["label"]))
 		var dest := DIR.path_join(p["file"])
 		var got: bool = await _downloader.fetch(MIRROR + p["file"], dest, int(p["size"]))
 		if not got and not _downloader.cancelled and p.has("hf"):
@@ -276,13 +283,44 @@ func new_vad() -> Object:
 func new_chat(system_prompt: String, schema: Dictionary, temperature := 0.8) -> Object:
 	if llm_state != "ready":
 		return null
-	var sampler = ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(schema).dry(0.8, 1.75, 2, 256, ["\n", ":", "\"", "*"]).temperature(temperature).top_p(0.92, 1).dist()
+	var sampler = ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(JSON.stringify(schema)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(temperature).top_p(0.92, 1).dist()
 	var threads := clampi(OS.get_processor_count() - 2, 2, 6)
 	return await ClassDB.class_call_static("NobodyWhoChat", "create", model, {
 		"system_prompt": system_prompt, "n_ctx": 4096, "sampler": sampler,
 		"template_variables": {"enable_thinking": false}, "n_threads": threads,
 		"context_shift": {"keep_first_turns": 1, "keep_last_turns": 4, "target": 0.6},
 	})
+
+
+func download_percent() -> float:
+	return 100.0 * float(_dl_done) / maxf(1.0, float(_dl_total))
+
+
+func record_turn(ms: int) -> void:
+	turns_total += 1
+	turn_ms_total += ms
+
+
+func avg_turn_seconds() -> float:
+	return float(turn_ms_total) / 1000.0 / maxf(1.0, float(turns_total))
+
+
+## Comentario de fin de jornada del jefe, generado por el modelo local.
+func boss_comment(stats: Dictionary) -> String:
+	var sys := "Eres Don Ramiro Billetes, el jefe exagerado, sarcástico y cómico de TeleTimo, un call center ficticio de un videojuego de humor. Evalúas la jornada de un empleado en 2 a 4 frases en español, con humor de oficina, usando SOLO los datos que te dan (menciona sus cifras). Sin insultos graves."
+	var chat: Object = await new_chat(sys, {"type": "object", "properties": {"comentario": {"type": "string", "minLength": 20, "maxLength": 420}}, "required": ["comentario"], "additionalProperties": false}, 0.9)
+	if chat == null:
+		return ""
+	var data := "Día %d. Ingresos ficticios: %d de una cuota de %d (%s). Nota: %s. Llamadas: %d, ventas: %d, le colgaron %d veces, contradicciones pilladas: %d, mejor venta: %d, incidentes: %d, llamadas perdidas: %d." % [
+		stats["day"], stats["income"], stats["quota"], "cuota cumplida" if stats["passed"] else "NO llegó a la cuota", stats["grade"],
+		stats["calls"], stats["successes"], stats["hangups"], stats["contradictions"], stats["best_sale"], stats["incidents"], stats["missed"]]
+	var t0 := Time.get_ticks_msec()
+	var out: String = await chat.ask(data).completed()
+	record_turn(Time.get_ticks_msec() - t0)
+	var j = JSON.parse_string(out)
+	if j is Dictionary:
+		return AIResponse.sanitize_text(str(j.get("comentario", "")), 420)
+	return ""
 
 
 func unload() -> void:

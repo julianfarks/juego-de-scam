@@ -17,7 +17,7 @@ var ambient_on := false
 var _wanted_music := ""
 var _music_thread: Thread
 var spectrum: AudioEffectSpectrumAnalyzerInstance
-var record_effect: AudioEffectRecord
+var capture_effect: AudioEffectCapture
 
 
 func _ready() -> void:
@@ -83,10 +83,11 @@ func _setup_buses() -> void:
 	AudioServer.add_bus_effect(voice_idx, an)
 	spectrum = AudioServer.get_bus_effect_instance(voice_idx, 0) as AudioEffectSpectrumAnalyzerInstance
 	var mic_idx := AudioServer.get_bus_index("Mic")
-	record_effect = AudioEffectRecord.new()
-	record_effect.format = AudioStreamWAV.FORMAT_16_BITS
-	AudioServer.add_bus_effect(mic_idx, record_effect)
-	AudioServer.set_bus_mute(mic_idx, true)  # graba sin devolver el sonido al altavoz
+	capture_effect = AudioEffectCapture.new()
+	capture_effect.buffer_length = 3.0
+	AudioServer.add_bus_effect(mic_idx, capture_effect)
+	# Se captura sin devolver el sonido al altavoz (volumen mínimo, sin silenciar el bus)
+	AudioServer.set_bus_volume_db(mic_idx, -80.0)
 
 
 func _build_sounds() -> void:

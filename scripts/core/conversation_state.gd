@@ -34,6 +34,10 @@ var close_attempts := 0
 var same_intent_streak := 0
 var last_top_intent := ""
 var off_topic_streak := 0
+var ai_interest := -1                 # interés 0-10 que estima el modelo (-1 = sin IA)
+var ai_history: Array = []             # efectos de cada turno según la IA
+var ai_doubt := ""                     # duda principal que expresa el cliente
+var client_lines: Array = []           # frases del cliente (para evitar repeticiones)
 var provisional := "en_curso"          # en_curso | receptivo | dudoso | hostil
 var ended := false
 var outcome := ""
@@ -116,6 +120,8 @@ func to_prompt_dict() -> Dictionary:
 	var objs := []
 	for o in pending_objections:
 		objs.append(PersonalityDB.OBJECTIONS[o]["label"])
+	if ai_doubt != "":
+		objs.append(ai_doubt)
 	var proms := []
 	for p in unfulfilled_promises():
 		proms.append(p["text"])

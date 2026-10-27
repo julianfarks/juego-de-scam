@@ -34,6 +34,9 @@ static func close_probability(st: ConversationState, mods: Dictionary = {}, ai_h
 		base -= 0.15
 	# Insistir con el cierre baja la probabilidad
 	base -= 0.07 * st.close_attempts
+	# Interés que estima la IA (0-10): influye, pero acotado a ±0,15
+	if st.ai_interest >= 0:
+		base += clampf((float(st.ai_interest) - 5.0) * 0.03, -0.15, 0.15)
 	base *= float(p["accept"])
 	base *= ClientDB.offer_affinity(st.client_id, st.offer_id)
 	base *= float(OfferDB.get_o(st.offer_id)["plaus"])

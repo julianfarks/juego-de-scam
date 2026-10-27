@@ -19,10 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -78,15 +74,6 @@ jobs:
 
       - name: Pruebas automáticas del juego (headless)
         run: godot --headless --path . tests/test_runner.tscn
-
-      - name: Pruebas del backend
-        run: cd backend && node --test test/*.test.js
-
-      - name: Prueba de integración juego ↔ backend (modo mock)
-        run: |
-          (cd backend && APP_ACCESS_CODE=ci-code TOKEN_SECRET=ci LLM_PROVIDER=mock STT_PROVIDER=mock TTS_PROVIDER=none PORT=8787 LOG_REQUESTS=0 node server.js &) 
-          sleep 2
-          godot --headless --path . tests/e2e_runner.tscn -- --backend=http://127.0.0.1:8787 --code=ci-code
 
       - name: Exportar APK de depuración
         run: |
