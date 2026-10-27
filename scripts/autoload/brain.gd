@@ -176,7 +176,19 @@ func download_all() -> bool:
 		llm_state = "missing"
 		voice_state = "missing"
 	_refresh_presence()
+	if ok:
+		load_all()
 	return ok
+
+
+## Carga en segundo plano todo lo que esté descargado.
+func load_all() -> void:
+	if not available:
+		return
+	if pack_present(llm_pack) and llm_state != "ready" and llm_state != "loading":
+		await load_llm()
+	if voice_state != "ready" and voice_state != "loading" and pack_present("stt") and pack_present("vad") and pack_present("tts"):
+		await load_voice()
 
 
 func cancel_download() -> void:

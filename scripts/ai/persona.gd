@@ -166,27 +166,26 @@ static func schema() -> Dictionary:
 	return {
 		"type": "object",
 		"properties": {
-			"dice": {"type": "string", "minLength": 2, "maxLength": 260},
+			"respuesta": {"type": "string", "minLength": 2, "maxLength": 260},
 			"emocion": {"type": "string", "enum": EMOTIONS},
 			"efecto": {"type": "string", "enum": ["mejora", "igual", "empeora"]},
 			"interes": {"type": "integer", "minimum": 0, "maximum": 10},
 			"duda": {"type": "string", "maxLength": 60},
 			"cuelga": {"type": "boolean"},
 		},
-		"required": ["dice", "emocion", "efecto", "interes", "duda", "cuelga"],
+		"required": ["respuesta", "emocion", "efecto", "interes", "duda", "cuelga"],
 		"additionalProperties": false,
 	}
 
 
-static func system_prompt(client_id: String, offer_id: String, situation: String) -> String:
+static func system_prompt(client_id: String, situation: String) -> String:
 	var c := ClientDB.get_c(client_id)
 	var pid: String = c["personality"]
 	var p := PersonalityDB.get_p(pid)
 	var s: Dictionary = STYLE.get(pid, STYLE["educado_firme"])
 	var f: Dictionary = c["facts"]
-	var o := OfferDB.get_o(offer_id)
 	var lines := [
-		"Eres %s, un personaje de un videojuego de humor. Te ha llamado por teléfono un vendedor de TeleTimo, una empresa que vende cosas absurdas." % c["name"],
+		"Eres %s, un personaje de un videojuego de humor. Tú eres el CLIENTE: te ha llamado por teléfono un vendedor de TeleTimo, una empresa que vende cosas absurdas." % c["name"],
 		"Sobre ti: trabajas de %s, vives en %s, tienes %s, te gusta %s y tienes %s." % [f["job"], f["city"], f["pet"], f["hobby"], f["family"]],
 		"Tu carácter: %s. %s" % [p["name"], p["desc"]],
 		"Cómo hablas: %s" % s["habla"],
@@ -194,19 +193,26 @@ static func system_prompt(client_id: String, offer_id: String, situation: String
 		"Lo que sabes: %s" % s["sabe"],
 		"Te convence: %s Te molesta: %s" % [s["convence"], s["molesta"]],
 		"Ahora mismo: %s" % situation,
-		"El vendedor te ofrecerá: %s (%s). Precio orientativo: %d pesos." % [o["name"], o["pitch"], int(o["price"])],
 		"",
+		"Cada mensaje que recibes es lo que dice el VENDEDOR. Tú contestas como el cliente, con tus propias palabras.",
 		"Reglas:",
-		"- Habla en español natural, como en una llamada real: 1 a 3 frases cortas. Nada de narrar ni describir acciones.",
-		"- Responde a lo que el vendedor acaba de decir. Si te pregunta algo, contéstalo de forma coherente con tus datos.",
-		"- Recuerda todo lo hablado en esta llamada: cifras, promesas, lo que preguntaste. No repitas frases que ya dijiste.",
-		"- Si algo no lo entiendes, pregunta por esa parte concreta.",
-		"- Mantén tu carácter siempre. El humor sale de tu forma de ser; no cuentes chistes sin venir a cuento.",
-		"- Nunca digas números de tarjeta, cuentas ni contraseñas. El pago lo decide el juego, no tú.",
+		"- Nunca copies ni repitas lo que dice el vendedor: contéstale.",
+		"- Español natural de llamada telefónica: 1 a 3 frases cortas. Sin narrar acciones.",
+		"- Si te pregunta algo, contéstalo con tus datos. Si algo no lo entiendes, pregunta por esa parte concreta.",
+		"- Recuerda lo hablado (cifras, promesas, lo que preguntaste) y no repitas tus frases.",
+		"- Mantén tu carácter. El humor sale de tu forma de ser; no cuentes chistes sin venir a cuento.",
+		"- Nunca digas números de tarjeta ni contraseñas. Si pagas o no lo decide el juego.",
 		"",
-		"Responde SIEMPRE con JSON: dice (lo que dices), emocion, efecto (si la última frase del vendedor te ha gustado: mejora, igual o empeora), interes (0-10, ganas de comprar), duda (tu principal duda ahora o vacío), cuelga (true solo si de verdad quieres colgar).",
+		"Contesta en JSON: respuesta (lo que tú le dices al vendedor), emocion, efecto (cómo te ha sentado su última frase: mejora, igual o empeora), interes (0-10, ganas de comprar), duda (tu duda principal ahora, o vacío), cuelga (true solo si de verdad quieres colgar).",
+		"Ejemplo. El vendedor dice: \"Buenas, le llamo para ofrecerle un seguro de sombreros.\" Tú: {\"respuesta\": \"¿Un seguro de sombreros? Si yo no uso ni gorra. ¿Y usted quién es?\", \"emocion\": \"sorpresa\", \"efecto\": \"igual\", \"interes\": 2, \"duda\": \"quién llama\", \"cuelga\": false}",
 	]
 	return "\n".join(PackedStringArray(lines))
+
+
+## Nota con el producto (se añade en el primer turno del vendedor).
+static func offer_note(offer_id: String) -> String:
+	var o := OfferDB.get_o(offer_id)
+	return "lo que vende es: %s (%s); un precio razonable sería unos %d pesos" % [o["name"], o["pitch"], int(o["price"])]
 
 
 ## Mensaje de cada turno: notas del juego (memoria verificable) + frase del vendedor.
@@ -214,7 +220,7 @@ static func turn_message(player_text: String, notes: Array) -> String:
 	var t := ""
 	if not notes.is_empty():
 		t = "[Notas del juego: %s]\n" % "; ".join(PackedStringArray(notes))
-	return t + "Vendedor: " + player_text
+	return t + "El vendedor dice: \"%s\"" % player_text.replace("\"", "'")
 
 
 static func voice_for(client_id: String) -> Dictionary:

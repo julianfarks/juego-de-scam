@@ -349,19 +349,18 @@ func test_call_session_offline() -> void:
 	section("Llamada completa en modo local")
 	var s := CallSession.new()
 	get_tree().root.add_child(s)
-	s.use_remote = false
 	var spoken := []
 	var result := {}
 	s.client_spoke.connect(func(t, _e, _g, src): spoken.append([t, src]))
 	s.ended.connect(func(r): result.merge(r))
-	s.start("pilar", "garantia_tostadora", 1, UpgradeDB.aggregate_mods([]), {}, 1234)
+	s.start("pilar", "garantia_tostadora", 1, UpgradeDB.aggregate_mods([]), {"force_basic": true}, 1234)
 	check(spoken.size() == 1, "el cliente saluda al empezar")
 	s.player_says("Hola, buenas tardes, me llamo Julián y le llamo de TeleTimo")
 	s.player_says("Le ofrezco una garantía para su tostadora, es como un seguro: si se rompe, se la cambiamos gratis")
 	s.player_says("Entiendo que lo tenga que pensar, pero le doy garantía de devolución por escrito")
 	s.player_says("Cuesta solo 29 euros y además hoy le hago un descuento")
 	check(spoken.size() >= 5, "responde a cada turno")
-	check(spoken.all(func(x): return x[1] in ["local", "rules"]), "sin servidor todo es diálogo local")
+	check(spoken.all(func(x): return x[1] in ["basico", "reglas"]), "sin IA cargada todo es diálogo básico (y así se etiqueta)")
 	s.player_says("Perfecto, ¿me dicta el número de su tarjeta?")
 	check(result.size() > 0 or s.active, "el intento de cierre se resuelve")
 	if not result.is_empty() and result["outcome"] == "success":
@@ -374,10 +373,9 @@ func test_call_session_offline() -> void:
 	# Tiempo límite
 	var s2 := CallSession.new()
 	get_tree().root.add_child(s2)
-	s2.use_remote = false
 	var res2 := {}
 	s2.ended.connect(func(r): res2.merge(r))
-	s2.start("brayan", "seguro_abduccion", 1, {}, {}, 9)
+	s2.start("brayan", "seguro_abduccion", 1, {}, {"force_basic": true}, 9)
 	for i in 400:
 		s2.tick(0.5)
 	check(not res2.is_empty(), "la llamada termina por tiempo o paciencia")

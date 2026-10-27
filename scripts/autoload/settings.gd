@@ -24,6 +24,7 @@ const DEFAULTS := {
 	"ai_gpu": true,          # aceleración por GPU del modelo de lenguaje
 	"gpu_probe": false,      # marca interna: si queda a true, la carga con GPU falló
 	"ai_enabled": true,
+	"ai_setup_seen": false,
 	"cam_sensitivity": 1.0,
 	"joystick_scale": 1.0,
 	"swap_sides": false,

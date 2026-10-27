@@ -93,11 +93,9 @@ func _show_offer_picker() -> void:
 	lv.add_child(UIKit.label(c["name"], 30, UIKit.C_ACCENT))
 	var stars := "★".repeat(int(lead["stars"])) + "☆".repeat(3 - int(lead["stars"]))
 	lv.add_child(UIKit.label("Dificultad: " + stars, 22))
-	if m.get("show_personality", 0):
-		var p := PersonalityDB.get_p(c["personality"])
-		lv.add_child(UIKit.label("CRM: %s — %s" % [p["name"], p["desc"]], 20, UIKit.C_BLUE))
-	else:
-		lv.add_child(UIKit.label("Compra el CRM para ver su personalidad.", 18, UIKit.C_MUTED))
+	var pp := PersonalityDB.get_p(c["personality"])
+	lv.add_child(UIKit.label("Carácter: %s — %s" % [pp["name"], pp["desc"]], 20, UIKit.C_BLUE))
+	lv.add_child(UIKit.label(("IA local: el cliente entenderá lo que le digas." if Brain.is_ready() else "Sin IA cargada: este cliente usará el diálogo básico (reglas)."), 17, UIKit.C_GOOD if Brain.is_ready() else Color("ff9f43")))
 	if m.get("show_likes", 0):
 		lv.add_child(UIKit.label("Le gusta: %s\nOdia: %s" % [", ".join(PackedStringArray(c["likes"])), ", ".join(PackedStringArray(c["dislikes"])) if not c["dislikes"].is_empty() else "nada en especial"], 19, UIKit.C_GOOD))
 	if lead.get("callback", false):
@@ -145,8 +143,8 @@ func _begin_call(oid: String) -> void:
 	_build_call_ui()
 	session = CallSession.new()
 	add_child(session)
-	session.use_remote = true
 	session.client_spoke.connect(_on_client_spoke)
+	session.client_partial.connect(_on_client_partial)
 	session.state_updated.connect(_refresh_state)
 	session.busy_changed.connect(_on_busy)
 	session.sale_completed.connect(_on_sale)
@@ -158,6 +156,7 @@ func _begin_call(oid: String) -> void:
 	Voice.speech_finished.connect(_on_speech_finished)
 	Voice.reset_state()
 	Game.on_call = true
+	thinking_label.text = "Sonando… el cliente va a descolgar"
 	session.start(lead["client_id"], offer_id, Game.day, Game.mods(), flags)
 	_on_mic_state(Voice.mic_state)
 	if Game.is_event("phone_outage"):
@@ -202,7 +201,7 @@ func _build_call_ui() -> void:
 	nh.add_child(source_label)
 	left.add_child(nh)
 	var m := Game.mods()
-	pers_label = UIKit.label(("Personalidad: " + PersonalityDB.get_p(c["personality"])["name"]) if m.get("show_personality", 0) else "Personalidad: ??? (CRM)", 18, UIKit.C_BLUE)
+	pers_label = UIKit.label("Carácter: " + PersonalityDB.get_p(c["personality"])["name"], 18, UIKit.C_BLUE)
 	left.add_child(pers_label)
 	left.add_child(UIKit.label("Oferta: " + OfferDB.get_o(offer_id)["name"], 18, UIKit.C_MUTED))
 	for k in [["trust", "Confianza", UIKit.C_GOOD], ["patience", "Paciencia", UIKit.C_BLUE], ["suspicion", "Sospecha", UIKit.C_BAD], ["understanding", "Comprensión", UIKit.C_ACCENT]]:
@@ -316,33 +315,50 @@ func _system_line(t: String) -> void:
 
 
 func _voice_profile() -> Dictionary:
-	var c := ClientDB.get_c(lead["client_id"])
-	var p := PersonalityDB.get_p(c["personality"])
-	var female: bool = c["gender"] == "f"
-	var fv := ["coral", "nova", "shimmer", "sage"]
-	var mv := ["ash", "onyx", "echo", "verse", "ballad"]
-	var h := absi(hash(lead["client_id"]))
-	return {
-		"id": lead["client_id"], "gender": c["gender"],
-		"pitch": float(p["voice"]["pitch"]) * (1.12 if female else 0.88),
-		"rate": float(p["voice"]["rate"]),
-		"remote_voice": fv[h % fv.size()] if female else mv[h % mv.size()],
-		"instructions": "Habla en español neutro, natural y expresivo. Personaje: %s. %s" % [p["name"], p["prompt"]],
-	}
+	return Persona.voice_for(lead["client_id"])
 
 
 func _on_client_spoke(text: String, emotion: String, gesture: String, source: String) -> void:
 	last_client_line = text
-	var src: String = {"remote": "IA remota", "local": "diálogo local", "rules": "reglas"}.get(source, source)
+	_remove_partial()
+	var src: String = {"ia": "IA local", "basico": "diálogo básico (sin IA)", "reglas": "reglas del juego"}.get(source, source)
 	# Sin subtítulos solo se oculta el texto si de verdad hay voz que escuchar
 	var shown := text if bool(Settings.get_value("subtitles")) or not Voice.can_speak() else "(habla — subtítulos desactivados; pulsa Repetir para volver a oírlo)"
 	_bubble(shown, "client", src)
-	source_label.text = Loc.t("ai_remote") if source == "remote" else Loc.t("ai_local")
-	source_label.add_theme_color_override("font_color", UIKit.C_GOOD if source == "remote" else UIKit.C_MUTED)
+	if source != "reglas":
+		source_label.text = Loc.t("ai_on") if source == "ia" else Loc.t("ai_basic")
+		source_label.add_theme_color_override("font_color", UIKit.C_GOOD if source == "ia" else Color("ff9f43"))
 	stage.set_emotion(emotion)
 	stage.gesture(gesture)
 	stage.speaking = true
 	Voice.speak(text, _voice_profile())
+
+
+## Subtítulo provisional mientras la IA genera la respuesta.
+var _partial_label: Label = null
+
+
+func _on_client_partial(text: String) -> void:
+	if not bool(Settings.get_value("subtitles")):
+		return
+	if _partial_label == null or not is_instance_valid(_partial_label):
+		var p := UIKit.panel(Color("2c3047"), 14, 10)
+		_partial_label = UIKit.label("", 22, Color("d5d8e6"))
+		p.add_child(_partial_label)
+		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var row := UIKit.hbox(0)
+		row.add_child(p)
+		row.add_child(UIKit.spacer(0, 60))
+		row.name = "Partial"
+		transcript.add_child(row)
+	_partial_label.text = text + " …"
+	transcript_scroll.scroll_vertical = int(transcript_scroll.get_v_scroll_bar().max_value)
+
+
+func _remove_partial() -> void:
+	if _partial_label and is_instance_valid(_partial_label):
+		_partial_label.get_parent().get_parent().queue_free()
+	_partial_label = null
 
 
 func _on_speech_finished(_who: String) -> void:
@@ -423,7 +439,7 @@ func _cancel() -> void:
 
 func _on_busy(b: bool) -> void:
 	Voice.set_processing(b)
-	thinking_label.text = Loc.t("mic_processing") if b else ""
+	thinking_label.text = ("%s está pensando…" % String(ClientDB.get_c(lead["client_id"])["name"]).split(" ")[0]) if b else ""
 	close_btn.disabled = b
 	send_btn.disabled = b
 
@@ -441,7 +457,10 @@ func _on_mic_pressed() -> void:
 				_ask_mic_consent()
 				return
 			if not Voice.stt_available():
-				_system_line("El reconocimiento de voz necesita el servidor IA (Ajustes → Voz e IA). Mientras tanto, escribe tus frases.")
+				if Brain.voice_state == "loading":
+					_system_line("El oído de la IA se está cargando; prueba en unos segundos.")
+				else:
+					_system_line("Para hablar por micrófono hacen falta los modelos de voz (Ajustes → IA y voz → Descargar). Mientras tanto, escribe tus frases.")
 				Voice._set_mic_state("offline")
 				text_edit.grab_focus()
 				return
@@ -452,7 +471,7 @@ func _ask_mic_consent() -> void:
 	var md := UIKit.modal(self, 760)
 	var box: VBoxContainer = md["box"]
 	box.add_child(UIKit.label("Usar el micrófono", 30, UIKit.C_ACCENT))
-	box.add_child(UIKit.label("El micrófono solo graba mientras el botón está en rojo («Escuchando»). El audio se envía a TU servidor de IA para convertirlo en texto y no se guarda en el juego. Puedes jugar siempre por texto.", 22))
+	box.add_child(UIKit.label("El micrófono solo graba mientras el botón está en rojo («Escuchando»). Tu voz se convierte en texto dentro del propio móvil: no se envía a ningún sitio ni se guarda. Puedes jugar siempre por texto.", 22))
 	var h := UIKit.hbox(10)
 	box.add_child(h)
 	var yes := UIKit.button("Aceptar y usar micrófono", func() -> void:
@@ -576,7 +595,7 @@ func _show_summary(r: Dictionary) -> void:
 		"Objeciones resueltas: %d (pendientes: %d)" % [r["objections_resolved"], r["objections_pending"]],
 		"Contradicciones: %d" % r["contradictions"],
 		"Cantidad ficticia: %s" % UIKit.money(int(r.get("final_amount", 0))),
-		"Respuestas: %d con IA remota, %d con diálogo local" % [r["remote_turns"], r["local_turns"]],
+		("Respuestas: %d de la IA local (media %.1f s)" % [r["ai_turns"], r["avg_turn_ms"] / 1000.0]) if r["mode"] == "ia" else "Respuestas: diálogo básico por reglas (la IA no estaba cargada)",
 	]
 	for l in lines:
 		box.add_child(UIKit.label(l, 21))

@@ -72,7 +72,7 @@ func _build_main() -> void:
 		h3.add_child(b6)
 	panel_box.add_child(h3)
 	panel_box.add_child(UIKit.spacer(0, 0, true))
-	var ai_txt := "IA remota configurada" if Settings.is_ai_configured() else "Sin servidor IA: diálogo local (configúralo en Ajustes → Voz e IA)"
+	var ai_txt := Brain.status_text()
 	panel_box.add_child(UIKit.label("Saldo ficticio: %s · %s" % [UIKit.money(int(Save.data["money"])), ai_txt], 18, UIKit.C_MUTED))
 	panel_box.add_child(UIKit.label("Todo es ficticio: clientes, ofertas, dinero y tarjetas.", 16, Color("ff9f9f")))
 

@@ -28,6 +28,18 @@ func _ready() -> void:
 		tw.tween_property(_splash, "modulate:a", 0.0, 0.6)
 		tw.tween_callback(_splash.queue_free)
 	_to_menu()
+	# IA local: si los modelos ya están, se cargan en segundo plano; si no, se ofrece
+	# descargarlos (una sola vez) en el primer inicio.
+	if Brain.available and OS.get_cmdline_user_args().is_empty():
+		if Brain.missing_packs().is_empty():
+			Brain.load_all()
+		elif not bool(Settings.get_value("ai_setup_seen")):
+			var setup := AISetup.new()
+			ui.add_child(setup)
+			setup.open()
+			setup.finished.connect(func() -> void:
+				if menu:
+					menu.refresh())
 	# Modo de capturas/pruebas: --demo-day arranca directamente una jornada
 	if "--demo-day" in OS.get_cmdline_user_args():
 		_start_day(1)

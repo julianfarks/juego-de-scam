@@ -11,7 +11,7 @@ permissions:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - name: Godot 4.6.2 + NobodyWho
@@ -19,12 +19,14 @@ jobs:
           curl -fsSL -o g.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip
           unzip -q g.zip && sudo mv Godot_v4.6.2-stable_linux.x86_64 /usr/local/bin/godot
           tools/fetch_nobodywho.sh linux
-      - name: Modelos (desde la Release "modelos")
+      - name: Modelos candidatos (Hugging Face, repos públicos)
         run: |
           mkdir -p models_local && cd models_local && touch .gdignore
-          B=https://github.com/julianfarks/juego-de-scam/releases/download/modelos
-          for f in qwen3.5-2b-q4km.gguf qwen3.5-0.8b-q4km.gguf whisper-base.zip silero-vad.zip kokoro-es.zip; do curl -fsSL -o $f $B/$f; done
-          for z in whisper-base silero-vad kokoro-es; do mkdir -p $z && unzip -q $z.zip -d $z; done
+          H=https://huggingface.co/NobodyWho
+          curl -fsSL -o qwen3.5-2b.gguf $H/Qwen_Qwen3.5-2B-GGUF/resolve/main/Qwen_Qwen3.5-2B-Q4_K_M-vendor-sampling.gguf
+          curl -fsSL -o qwen3.5-4b.gguf $H/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q4_K_M-vendor-sampling.gguf
+          curl -fsSL -o gemma4-e2b.gguf $H/Google_Gemma4-E2B-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf
+          ls -la
       - name: Importar
         run: godot --headless --path . --import || true
       - name: Evaluar

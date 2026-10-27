@@ -44,6 +44,17 @@ func open() -> void:
 	_tab_controls()
 
 
+var _refresh_cb: Callable
+var _progress_cb: Callable
+
+
+func _exit_tree() -> void:
+	if _refresh_cb.is_valid() and Brain.state_changed.is_connected(_refresh_cb):
+		Brain.state_changed.disconnect(_refresh_cb)
+	if _progress_cb.is_valid() and Brain.download_progress.is_connected(_progress_cb):
+		Brain.download_progress.disconnect(_progress_cb)
+
+
 func _close() -> void:
 	closed.emit()
 	queue_free()
@@ -132,53 +143,55 @@ func _tab_audio() -> void:
 
 
 func _tab_voice() -> void:
-	var p := _page("Voz e IA")
-	p.add_child(UIKit.label("Servidor de IA (backend de TeleTimo). Sin él, el juego usa el diálogo local y el modo texto. Las claves de los proveedores viven en el servidor, nunca en el teléfono.", 20, UIKit.C_MUTED))
-	var url := LineEdit.new()
-	url.placeholder_text = "https://mi-servidor.ejemplo.com"
-	url.text = str(Settings.get_value("backend_url"))
-	url.custom_minimum_size = Vector2(0, 60)
-	url.add_theme_font_size_override("font_size", 22)
-	url.text_changed.connect(func(s: String) -> void: Settings.set_value("backend_url", s))
-	p.add_child(UIKit.label(Loc.t("backend_url"), 24))
-	p.add_child(url)
-	var code := LineEdit.new()
-	code.placeholder_text = "Código que configuraste en el servidor (APP_ACCESS_CODE)"
-	code.secret = true
-	code.text = str(Settings.get_value("access_code"))
-	code.custom_minimum_size = Vector2(0, 60)
-	code.add_theme_font_size_override("font_size", 22)
-	code.text_changed.connect(func(s: String) -> void: Settings.set_value("access_code", s))
-	p.add_child(UIKit.label(Loc.t("access_code"), 24))
-	p.add_child(code)
-	conn_label = UIKit.label("Estado: " + AI.status, 22, UIKit.C_MUTED)
-	p.add_child(UIKit.button(Loc.t("test_connection"), _test_conn, UIKit.C_BLUE, 60, 22))
+	var p := _page("IA y voz")
+	p.add_child(UIKit.label("Los clientes los interpreta una IA que funciona dentro del móvil: no hace falta Internet ni ninguna cuenta. Solo la primera vez se descargan sus modelos.", 20, UIKit.C_MUTED))
+	conn_label = UIKit.label("", 22, UIKit.C_TEXT)
 	p.add_child(conn_label)
-	_option_row(p, Loc.t("tts_engine"), "tts_mode", ["system", "remote", "off"], ["Voz del sistema (gratis, sin conexión)", "Voz remota del servidor (de pago)", "Sin voz (solo subtítulos)"])
-	p.add_child(UIKit.label(Voice.tts_status_text(), 20, UIKit.C_MUTED))
-	_slider_row(p, "Velocidad de las voces", "voice_speed", 0.7, 1.6)
-	_option_row(p, Loc.t("stt_engine"), "stt_mode", ["remote", "off"], ["Servidor IA (requiere conexión)", "Desactivado (solo texto)"])
+	var dl_bar := UIKit.bar(0, 100, UIKit.C_ACCENT, 18)
+	p.add_child(dl_bar)
+	var refresh := func() -> void:
+		if not is_instance_valid(conn_label) or not is_instance_valid(dl_bar):
+			return
+		var lines := ["Conversación: " + Brain.status_text(), "Oído: " + Voice.stt_status_text(), "Voces: " + Voice.tts_status_text()]
+		if Brain.downloading:
+			lines.append("Descargando: %d %%" % int(Brain.download_percent()))
+		elif not Brain.missing_packs().is_empty() and Brain.available:
+			lines.append("Pendiente de descargar: %.2f GB" % (Brain.missing_bytes() / 1073741824.0))
+		if Brain.last_error != "" and Brain.llm_state in ["error", "missing"]:
+			lines.append("Último error: " + Brain.last_error)
+		conn_label.text = "\n".join(PackedStringArray(lines))
+		dl_bar.visible = Brain.downloading
+		dl_bar.value = Brain.download_percent()
+	refresh.call()
+	_refresh_cb = refresh
+	_progress_cb = func(_a: int, _b: int, _c: String) -> void: refresh.call()
+	Brain.state_changed.connect(_refresh_cb)
+	Brain.download_progress.connect(_progress_cb)
+	var h := UIKit.hbox(10)
+	p.add_child(h)
+	var dl := UIKit.button("Descargar modelos de IA", func() -> void:
+		if Brain.missing_packs().is_empty():
+			Brain.load_all()
+		else:
+			Brain.download_all(), UIKit.C_GOOD, 60, 22)
+	dl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(dl)
+	h.add_child(UIKit.button("Pausar", func() -> void: Brain.cancel_download(), UIKit.C_PANEL2, 60, 22))
+	_option_row(p, "Tamaño del cerebro", "llm_size", ["auto", "normal", "ligero"], ["Automático según la memoria", "Normal (mejor conversación, 1,3 GB)", "Ligero (más rápido, 0,5 GB)"])
+	_check_row(p, "Usar la GPU para la IA (si da problemas, desactívalo)", "ai_gpu")
+	_option_row(p, Loc.t("tts_engine"), "tts_mode", ["ia", "system", "off"], ["Voces neuronales (IA en el móvil)", "Voz del sistema Android", "Sin voz (solo subtítulos)"])
 	_check_row(p, "Terminar de escuchar al detectar silencio", "vad_auto_stop")
 	var consent := bool(Settings.get_value("mic_consent"))
 	p.add_child(UIKit.label("Permiso de micrófono dentro del juego: %s" % ("aceptado" if consent else "no aceptado todavía"), 20, UIKit.C_MUTED))
 	if consent:
 		p.add_child(UIKit.button("Retirar consentimiento del micrófono", func() -> void: Settings.set_value("mic_consent", false), UIKit.C_PANEL2, 56, 20))
-	p.add_child(UIKit.button("Probar voz del cliente", func() -> void:
-		Voice.speak("¡Hola! Soy un cliente de prueba y no pienso comprarle nada… o quizá sí.", {"id": "test", "gender": "f", "pitch": 1.1, "rate": 1.0, "remote_voice": "coral", "instructions": "Tono divertido"}), UIKit.C_PANEL2, 56, 20))
-
-
-func _test_conn() -> void:
-	conn_label.text = "Probando…"
-	var r := await AI.health()
-	if not is_instance_valid(conn_label):
-		return
-	if r.get("ok", false):
-		var d: Dictionary = r.get("data", {})
-		conn_label.text = "Servidor OK. LLM: %s · STT: %s · TTS: %s · Sesión: %s" % [d.get("llm", "?"), d.get("stt", "?"), d.get("tts", "?"), "OK" if r.get("session", false) else "rechazada (¿código de acceso?)"]
-		conn_label.add_theme_color_override("font_color", UIKit.C_GOOD if r.get("session", false) else UIKit.C_ACCENT)
-	else:
-		conn_label.text = "Sin conexión: " + str(r.get("error", ""))
-		conn_label.add_theme_color_override("font_color", UIKit.C_BAD)
+	p.add_child(UIKit.button("Probar voz de un cliente", func() -> void:
+		if Brain.voice_state != "ready" and Brain.missing_packs().is_empty():
+			await Brain.load_voice()
+		Voice.speak("¡Hola! Soy un cliente de prueba y no pienso comprarle nada… o quizá sí.", {"id": "test", "female": true, "pitch": 1.05, "speed": 1.0}), UIKit.C_PANEL2, 56, 20))
+	p.add_child(UIKit.button("Borrar modelos descargados (libera espacio)", func() -> void:
+		Brain.delete_models()
+		refresh.call(), Color("7b241c"), 56, 20))
 
 
 func _tab_controls() -> void:

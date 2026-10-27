@@ -40,40 +40,53 @@ var _turn_seq := 0
 var _pending_end := ""
 
 
-func start(client_id: String, offer_id: String, p_day: int, p_mods: Dictionary, p_flags: Dictionary = {}, seed_v: int = -1) -> void:
+var _prep := "none"          # none | running | done
+var _greeting: Dictionary = {}
+var _offer_told := false
+
+
+## Empieza a preparar al cliente (crear la conversación y pensar el saludo) antes de
+## que el jugador elija la oferta, para ocultar el tiempo de arranque del modelo.
+func prepare(client_id: String, p_flags: Dictionary = {}, seed_v: int = -1) -> void:
+	if _prep != "none":
+		return
+	_prep = "running"
 	if seed_v >= 0:
 		rng.seed = seed_v
 	else:
 		rng.randomize()
-	day = p_day
-	mods = p_mods
 	flags = p_flags
 	st = ConversationState.new()
-	st.setup(client_id, offer_id, float(flags.get("extra_trust", 0.0)), float(flags.get("extra_patience", 0.0)))
-	st.time_limit = 210.0 * float(flags.get("time_mult", 1.0))
+	st.setup(client_id, "seguro_abduccion", float(flags.get("extra_trust", 0.0)), float(flags.get("extra_patience", 0.0)))
 	situation = Persona.SITUATIONS[rng.randi() % Persona.SITUATIONS.size()]
-	active = true
-	busy = false
-	var want_ai: bool = flags.get("force_basic", false) == false and Brain.is_ready()
-	if want_ai:
-		_set_busy(true)
-		chat = await Brain.new_chat(Persona.system_prompt(client_id, offer_id, situation), Persona.schema())
+	if flags.get("force_basic", false) == false and Brain.is_ready():
+		chat = await Brain.new_chat(Persona.system_prompt(client_id, situation), Persona.schema())
 		if chat != null:
 			mode = "ia"
-	if mode == "ia":
-		var opening := "[Suena el teléfono y descuelgas. Saluda a tu manera; aún no sabes quién llama.]"
-		if flags.get("weird_question", false):
-			opening = "[Suena el teléfono y descuelgas. Saluda y suelta enseguida una pregunta rarísima e inesperada al que llama.]"
-		var r := await _ask_ai(opening)
-		_set_busy(false)
-		if not active:
-			return
-		if r.get("ok", false):
-			_emit_ai(r)
-		else:
-			_fallback_greeting()
+			var opening := "[Suena el teléfono y descuelgas. Saluda a tu manera; aún no sabes quién llama.]"
+			if flags.get("weird_question", false):
+				opening = "[Suena el teléfono y descuelgas. Saluda y suelta enseguida una pregunta rarísima e inesperada al que llama.]"
+			_greeting = await _ask_ai(opening, false)
+	_prep = "done"
+
+
+func start(client_id: String, offer_id: String, p_day: int, p_mods: Dictionary, p_flags: Dictionary = {}, seed_v: int = -1) -> void:
+	day = p_day
+	mods = p_mods
+	if _prep == "none":
+		prepare(client_id, p_flags, seed_v)
+	st.offer_id = offer_id
+	st.time_limit = 210.0 * float(flags.get("time_mult", 1.0))
+	active = true
+	_set_busy(true)
+	while _prep != "done":
+		await get_tree().process_frame
+	_set_busy(false)
+	if not active:
+		return
+	if mode == "ia" and _greeting.get("ok", false):
+		_emit_ai(_greeting, false)
 	else:
-		_set_busy(false)
 		_fallback_greeting()
 	state_updated.emit()
 
@@ -112,6 +125,9 @@ func player_says(text: String, via_voice := false) -> void:
 	state_updated.emit()
 	if mode == "ia":
 		var notes := _notes_for(rules)
+		if not _offer_told:
+			_offer_told = true
+			notes.push_front(Persona.offer_note(st.offer_id))
 		if rules["hangup"] != "":
 			notes.append(_hangup_note(rules["hangup"]))
 		_set_busy(true)
@@ -181,14 +197,15 @@ func _may_hang_up() -> bool:
 
 
 ## Pregunta al modelo y valida la respuesta. Evita repeticiones regenerando una vez.
-func _ask_ai(message: String) -> Dictionary:
+func _ask_ai(message: String, cancellable := true) -> Dictionary:
 	if chat == null:
 		return {"ok": false}
-	_turn_seq += 1
+	if cancellable:
+		_turn_seq += 1
 	var my := _turn_seq
 	var t0 := Time.get_ticks_msec()
 	var raw := await _stream(chat.ask(message), my)
-	if my != _turn_seq or not active:
+	if my != _turn_seq or (not active and _prep == "done"):
 		return {"ok": false, "cancelled": true}
 	var r := _parse(raw)
 	if r["ok"] and _is_repeat(r["dice"]) and regenerations < 6:
@@ -217,10 +234,10 @@ func _stream(stream: Object, my: int) -> String:
 		if tok == null:
 			break
 		out += str(tok)
-		if my != _turn_seq or not active:
+		if my != _turn_seq or (not active and _prep == "done"):
 			chat.stop_generation()
 			return ""
-		var partial := JsonPeek.string_field(out, "dice")
+		var partial := JsonPeek.string_field(out, "respuesta")
 		if partial != "":
 			client_partial.emit(partial)
 		if Time.get_ticks_msec() - t0 > TURN_TIMEOUT_MS:
@@ -233,7 +250,7 @@ func _parse(raw: String) -> Dictionary:
 	var j = JSON.parse_string(raw)
 	if not (j is Dictionary):
 		return {"ok": false}
-	var dice := AIResponse.sanitize_text(str(j.get("dice", "")), 300)
+	var dice := AIResponse.sanitize_text(str(j.get("respuesta", "")), 300)
 	if dice.length() < 2:
 		return {"ok": false}
 	var emo := str(j.get("emocion", "neutral"))
@@ -278,7 +295,7 @@ func _emit_ai(r: Dictionary, apply_judgement := true) -> void:
 	st.add_history("client", r["dice"])
 	st.client_lines.append(r["dice"])
 	var anim: String = Persona.EMOTION_TO_ANIM.get(r["emocion"], "neutral")
-	var gesture := {"risa": "laugh", "sorpresa": "surprised", "confusion": "head_scratch", "enfado": "angry", "desconfianza": "arms_crossed"}.get(r["emocion"], "")
+	var gesture: String = {"risa": "laugh", "sorpresa": "surprised", "confusion": "head_scratch", "enfado": "angry", "desconfianza": "arms_crossed"}.get(r["emocion"], "")
 	if gesture == "":
 		gesture = "nod" if r["efecto"] == "mejora" else ("shake" if r["efecto"] == "empeora" else "")
 	client_spoke.emit(r["dice"], anim, gesture, "ia")
