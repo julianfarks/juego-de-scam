@@ -49,7 +49,7 @@
 
 ## Requisitos
 
-- **Móvil Android de 64 bits (arm64)**. Para la IA: unos **<!--RAM-->** de RAM y **<!--ESPACIO-->** libres.
+- **Móvil Android de 64 bits (arm64)**. Para la IA: **6 GB de RAM** para el cerebro normal (Gemma 4 E2B); con 4–5 GB el juego elige el ligero (Qwen3.5 0.8B), que conversa peor. Espacio: **unos 5 GB libres durante la descarga** y 3,6 GB después (1,1 GB con el ligero).
 - Conexión a Internet **solo la primera vez** para descargar los modelos.
 
 ## Desarrollo

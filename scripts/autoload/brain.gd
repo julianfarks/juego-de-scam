@@ -177,6 +177,17 @@ func download_all() -> bool:
 	state_changed.emit()
 	var ok := true
 	var total := missing_bytes()
+	# Espacio: lo que falta + margen (al unir las partes hace falta una parte más).
+	var need := total + 1700000000 if missing_packs().any(func(id): return PACKS[id].has("parts")) else total + 200000000
+	var dir := DirAccess.open(DIR)
+	var free_space: int = dir.get_space_left() if dir else -1
+	if free_space > 0 and free_space < need:
+		last_error = "No hay espacio suficiente: hacen falta %.1f GB libres y hay %.1f GB." % [need / 1e9, free_space / 1e9]
+		downloading = false
+		llm_state = "error" if not pack_present(llm_pack) else llm_state
+		voice_state = "error" if voice_state == "downloading" else voice_state
+		state_changed.emit()
+		return false
 	var done_before := 0
 	for id in missing_packs():
 		var p: Dictionary = PACKS[id]
