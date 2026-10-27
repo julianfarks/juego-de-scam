@@ -317,7 +317,7 @@ func unlock(id: String) -> void:
 		return
 	list.append(id)
 	achievement_unlocked.emit(id)
-	notify.emit("🏆 Logro: " + AchievementDB.ACHIEVEMENTS[id]["name"], "achievement")
+	notify.emit("Logro desbloqueado: " + AchievementDB.ACHIEVEMENTS[id]["name"], "achievement")
 	Audio.play("applause", -6.0)
 
 
@@ -337,6 +337,16 @@ func _check_achievements() -> void:
 		unlock("rich")
 	if int(ledger.get("max_streak", 0)) >= 3:
 		unlock("streak")
+
+
+## Datos de la jornada para que el jefe (IA o local) comente antes de cerrar.
+func day_stats_preview() -> Dictionary:
+	var income: int = ledger["income"]
+	var q := quota()
+	return {"income": income, "quota": q, "grade": BossLines.grade_for(income, q, ledger["hangups"], ledger["calls"]),
+		"calls": ledger["calls"], "successes": ledger["successes"], "hangups": ledger["hangups"],
+		"contradictions": ledger["contradictions"], "best_sale": ledger["best_sale"], "incidents": ledger["incidents"],
+		"missed": ledger["missed"], "day": day, "passed": income >= q}
 
 
 ## Cierra la jornada y aplica todo al guardado. Devuelve el informe completo.

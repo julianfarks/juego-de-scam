@@ -36,7 +36,7 @@ static func default_data() -> Dictionary:
 			"days_completed": 0, "calls_made": 0, "transactions": 0, "money_total": 0,
 			"successes": 0, "failures": 0, "hangups": 0, "clients_served": {},
 			"record_day_income": 0, "objectives_completed": 0, "contradictions_caught": 0,
-			"voice_turns": 0, "text_turns": 0, "longest_call_s": 0, "best_grade": "",
+			"voice_turns": 0, "text_turns": 0, "longest_call_s": 0, "best_grade": "", "laughs_used": 0,
 		},
 		"achievements": [],
 		"crm": [],
