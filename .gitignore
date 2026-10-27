@@ -8,3 +8,10 @@ __pycache__/
 .pytest_cache/
 export_credentials.cfg
 *.keystore
+
+# Binarios de NobodyWho (>100 MB): los descarga tools/fetch_nobodywho.sh y el CI
+addons/nobodywho/*.so
+addons/nobodywho/*.dll
+addons/nobodywho/*.dylib
+addons/nobodywho/*.pdb
+models_local/

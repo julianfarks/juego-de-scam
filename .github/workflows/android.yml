@@ -10,7 +10,8 @@ permissions:
   contents: write
 
 env:
-  GODOT_VERSION: "4.3"
+  GODOT_VERSION: "4.6.2"
+  GODOT_SHORT: "4.6"
 
 jobs:
   build:
@@ -47,6 +48,9 @@ jobs:
           mv tpl/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable/
           godot --version
 
+      - name: Bibliotecas de IA local (NobodyWho)
+        run: tools/fetch_nobodywho.sh all
+
       - name: Keystore de depuración (generado en el runner, no se guarda en el repo)
         run: |
           keytool -genkey -v -keystore "$HOME/debug.keystore" -storepass android -alias androiddebugkey \
@@ -56,7 +60,7 @@ jobs:
         run: |
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           mkdir -p ~/.config/godot
-          cat > ~/.config/godot/editor_settings-4.3.tres <<EOT
+          cat > ~/.config/godot/editor_settings-${GODOT_SHORT}.tres <<EOT
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
@@ -66,8 +70,8 @@ jobs:
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOT
-          sed -i 's/^          //' ~/.config/godot/editor_settings-4.3.tres
-          cat ~/.config/godot/editor_settings-4.3.tres
+          sed -i 's/^          //' ~/.config/godot/editor_settings-${GODOT_SHORT}.tres
+          cat ~/.config/godot/editor_settings-${GODOT_SHORT}.tres
 
       - name: Importar recursos
         run: godot --headless --path . --import || true

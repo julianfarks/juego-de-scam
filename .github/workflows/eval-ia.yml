@@ -1,0 +1,43 @@
+name: Evaluación de la IA local
+
+on:
+  push:
+    paths: ["tests/eval/**", "scripts/ai/**", ".github/workflows/eval-ia.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Godot 4.6.2 + NobodyWho
+        run: |
+          curl -fsSL -o g.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.x86_64.zip
+          unzip -q g.zip && sudo mv Godot_v4.6.2-stable_linux.x86_64 /usr/local/bin/godot
+          tools/fetch_nobodywho.sh linux
+      - name: Modelos (desde la Release "modelos")
+        run: |
+          mkdir -p models_local && cd models_local && touch .gdignore
+          B=https://github.com/julianfarks/juego-de-scam/releases/download/modelos
+          for f in qwen3.5-2b-q4km.gguf qwen3.5-0.8b-q4km.gguf whisper-base.zip silero-vad.zip kokoro-es.zip; do curl -fsSL -o $f $B/$f; done
+          for z in whisper-base silero-vad kokoro-es; do mkdir -p $z && unzip -q $z.zip -d $z; done
+      - name: Importar
+        run: godot --headless --path . --import || true
+      - name: Evaluar
+        run: |
+          mkdir -p eval_out
+          nproc > eval_out/cpu.txt; lscpu | grep "Model name" >> eval_out/cpu.txt
+          bash tests/eval/run_eval.sh eval_out 2>&1 | tee eval_out/log.txt
+      - name: Publicar resultados
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view evaluaciones >/dev/null 2>&1 || gh release create evaluaciones --title "Evaluaciones de la IA (CI)" --notes "Transcripciones y tiempos de las pruebas automáticas de la IA local." --prerelease
+          cd eval_out && tar czf ../eval-${GITHUB_RUN_NUMBER}.tgz . && cd ..
+          cp eval-${GITHUB_RUN_NUMBER}.tgz eval-ultima.tgz
+          gh release upload evaluaciones eval-ultima.tgz eval-${GITHUB_RUN_NUMBER}.tgz --clobber

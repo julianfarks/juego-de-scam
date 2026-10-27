@@ -7,7 +7,7 @@ config/name="TeleTimo 3D"
 config/description="Sátira de oficina 3D: un call center ficticio con clientes controlados por IA. Todo el dinero y las tarjetas son de mentira."
 config/version="0.1.0"
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://assets/icon/icon.png"
 config/use_custom_user_dir=false
 
