@@ -136,6 +136,7 @@ func player_says(text: String, via_voice := false) -> void:
 		_set_busy(false)
 		if not active:
 			return
+		_maybe_suggest_light()
 		if r.get("ok", false):
 			_emit_ai(r)
 			if rules["hangup"] != "":
@@ -255,6 +256,16 @@ func _stream(stream: Object, my: int) -> String:
 			chat.stop_generation()
 			break
 	return out
+
+
+## Si el móvil tarda demasiado con el cerebro normal, se avisa (una vez por sesión)
+## de que existe el ligero. No se cambia solo: es decisión del jugador.
+static var _light_suggested := false
+func _maybe_suggest_light() -> void:
+	if _light_suggested or Brain.llm_pack != "llm_normal" or last_turn_ms < 40000:
+		return
+	_light_suggested = true
+	notice.emit("Tu móvil ha tardado %d s en esta respuesta. Si se te hace largo, en Ajustes → IA y voz → Tamaño del cerebro puedes elegir el ligero: responde más rápido, aunque conversa peor (se descarga aparte, 0,5 GB)." % int(last_turn_ms / 1000.0))
 
 
 ## Mientras el modelo piensa se baja la tasa de imágenes: la pantalla de llamada

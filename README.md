@@ -4,7 +4,17 @@
 
 > Todo es ficticio: personas, empresas, ofertas, dinero y tarjetas. Las tarjetas del juego empiezan por `0000`, no pasan la comprobación de Luhn y caducan el mes 13. El juego nunca pide datos financieros reales. Es una parodia: las estafas telefónicas reales hacen daño de verdad.
 
-<!--ESTADO-->
+## Estado (27/10/2026)
+
+| Qué | Resultado | Dónde se comprobó |
+|---|---|---|
+| Pruebas unitarias (reglas, memoria, economía, guardado…) | 240 / 240 | PC (Linux) |
+| Prueba completa dentro del juego con IA real (descarga en dos partes, carga de Gemma, llamada con 4 respuestas de la IA, voz Kokoro, Whisper, venta, fin de jornada, guardado) | 16 / 16 | PC (Linux, 2 núcleos) |
+| La misma prueba en Android | 17 / 17 con la IA respondiendo en personaje (traductor gráfico SwiftShader, pantalla en blanco) · 18 / 19 con gráficos ANGLE: todo se ve, pero la IA no llegó a tiempo y respondió el diálogo básico | Emulador Android 12 x86_64 en GitHub Actions |
+| Conversación larga (13 turnos × 3 personalidades): preguntas, bromas, pregunta personal, contradicción de precio, pago | 0 fallos de formato; recuerda precios y contradicciones | CI, 4 núcleos |
+
+**No se ha probado en un móvil real.** El emulador no tiene micrófono real ni GPU: dibuja con el procesador, el mismo que usa la IA, y por eso las respuestas tardaron 35–150 s. En un móvil la GPU dibuja y el procesador queda para la IA; en CI (4 núcleos, sin gráficos) Gemma tarda unos 8 s por respuesta, pero en un móvil concreto puede ser más o menos. Si un móvil tarda más de 40 s, el juego lo dice y sugiere el cerebro ligero.
+
 
 ## Cómo se juega (sin configurar nada)
 
@@ -69,7 +79,16 @@
 | Prueba dentro del juego | Descarga, carga, jornada, llamada con IA, voz, venta, guardado | se activa con `user://autotest.flag` |
 | Emulador Android | Instala el APK y ejecuta la prueba anterior en Android | `android-test.yml` (resultados en la Release `evaluaciones`) |
 
-<!--LIMITACIONES-->
+## Limitaciones conocidas
+
+- **Sin prueba en un móvil físico**: no se ha medido la velocidad real de la IA ni probado el micrófono real (en el emulador la voz se comprobó sintetizando una frase con Kokoro y pasándola a Whisper).
+- **Descarga grande la primera vez**: 3,3 GB con el cerebro normal (1,1 GB con el ligero). Sin descargarla, el juego funciona con diálogo básico por reglas y lo indica en pantalla.
+- **Móviles con menos de 6 GB de RAM**: usan el cerebro ligero, que conversa bastante peor.
+- **La IA es un modelo pequeño**: a veces contesta con frases algo raras o se va por las ramas. Lo importante (dinero, venta, colgar, memoria de precios) lo controla el código, no la IA.
+- **Tiempo límite por respuesta**: 150 s. Si la IA no termina, contesta el diálogo básico y se avisa en el chat («La IA no respondió a tiempo»).
+- **Solo arm64**: el APK publicado es para móviles de 64 bits ARM (casi todos los actuales). El APK x86_64 de la Release «evaluaciones» es solo para el emulador.
+- **Voz del sistema**: si las voces neuronales no se pueden cargar, se usa la voz de Android, que no es generativa y así se indica en Ajustes.
+
 
 ## Créditos
 
