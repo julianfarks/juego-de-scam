@@ -40,13 +40,24 @@ func _flush() -> void:
 		f.close()
 
 
+var last_shot_colors := 0
+
 func shot(name: String) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var img := get_viewport().get_texture().get_image()
+	last_shot_colors = 0
 	if img:
 		img.save_png(OUT.path_join(name + ".png"))
-	say("captura " + name)
+		# ¿Se ve algo? Cuenta colores distintos en una versión reducida de la imagen.
+		var small := img.duplicate() as Image
+		small.resize(64, 36, Image.INTERPOLATE_NEAREST)
+		var seen := {}
+		for y in small.get_height():
+			for x in small.get_width():
+				seen[small.get_pixel(x, y).to_html(false)] = true
+		last_shot_colors = seen.size()
+	say("captura %s (%d colores)" % [name, last_shot_colors])
 
 
 func wait(s: float) -> void:
@@ -86,6 +97,7 @@ func _run() -> void:
 	main._start_day(1)
 	await wait(3.0)
 	await shot("02_oficina")
+	check(last_shot_colors > 20, "la oficina 3D se dibuja en pantalla (%d colores; %s)" % [last_shot_colors, RenderingServer.get_video_adapter_name()])
 	var office: OfficeController = main.office
 	check(office.player != null and Game.in_shift, "jornada iniciada y jugador en la oficina")
 	var p0: Vector3 = office.player.global_position
@@ -117,6 +129,7 @@ func _run() -> void:
 			await wait(0.5)
 		say("Vendedor: %s\n            Cliente (%.1f s): %s" % [line, (Time.get_ticks_msec() - t0) / 1000.0, s.st.history[-1]["text"]])
 	await shot("04_llamada")
+	check(last_shot_colors > 20, "la pantalla de llamada se dibuja (%d colores)" % last_shot_colors)
 	check(s.ai_turns >= 3, "el cliente respondió con la IA (%d turnos)" % s.ai_turns)
 	# 4. Voz: el cliente habla con la voz neuronal y Whisper entiende una frase sintetizada
 	if Brain.tts_ok and Brain.stt != null:

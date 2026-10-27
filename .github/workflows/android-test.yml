@@ -32,7 +32,7 @@ jobs:
           ram-size: 8192M
           disk-size: 14G
           cores: 4
-          emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swangle_indirect -no-boot-anim -camera-back none
           disable-animations: true
           script: bash tests/android/emulator_test.sh
       - name: Publicar resultados
