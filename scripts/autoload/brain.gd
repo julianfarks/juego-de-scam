@@ -57,6 +57,24 @@ func _ready() -> void:
 		return
 	llm_pack = choose_llm_pack()
 	_refresh_presence()
+	Settings.changed.connect(_on_setting)
+
+
+## Cambiar el tamaño del cerebro en Ajustes se aplica al momento: se libera el
+## modelo cargado y se carga el nuevo si ya está descargado (si no, hay que descargarlo).
+func _on_setting(key: String) -> void:
+	if key != "llm_size" or downloading:
+		return
+	var nuevo := choose_llm_pack()
+	if nuevo == llm_pack:
+		return
+	llm_pack = nuevo
+	model = null
+	if llm_state in ["ready", "error"]:
+		llm_state = "missing"
+	_refresh_presence()
+	if pack_present(llm_pack) and llm_state == "missing":
+		load_llm()
 
 
 ## Elige el modelo según la memoria del dispositivo (se puede forzar en Ajustes).
