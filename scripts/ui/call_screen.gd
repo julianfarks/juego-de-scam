@@ -23,6 +23,8 @@ var offer_id := ""
 var last_client_line := ""
 var silence_requested := false
 var soundboard_left := 1
+var summary_shown := false
+var last_result: Dictionary = {}
 
 # UI
 var root_box: HBoxContainer
@@ -37,7 +39,6 @@ var obj_label: Label
 var timer_bar: ProgressBar
 var transcript: VBoxContainer
 var transcript_scroll: ScrollContainer
-var subtitle: Label
 var mic_btn: Button
 var mic_label: Label
 var mic_level: ProgressBar
@@ -228,8 +229,6 @@ func _build_call_ui() -> void:
 	right.add_child(tp)
 	thinking_label = UIKit.label("", 20, UIKit.C_ACCENT)
 	right.add_child(thinking_label)
-	subtitle = UIKit.label("", 1)
-	subtitle.visible = false
 	# Micrófono + texto
 	var mic_row := UIKit.hbox(12)
 	right.add_child(mic_row)
@@ -335,7 +334,9 @@ func _voice_profile() -> Dictionary:
 func _on_client_spoke(text: String, emotion: String, gesture: String, source: String) -> void:
 	last_client_line = text
 	var src: String = {"remote": "IA remota", "local": "diálogo local", "rules": "reglas"}.get(source, source)
-	_bubble(text, "client", src)
+	# Sin subtítulos solo se oculta el texto si de verdad hay voz que escuchar
+	var shown := text if bool(Settings.get_value("subtitles")) or not Voice.can_speak() else "(habla — subtítulos desactivados; pulsa Repetir para volver a oírlo)"
+	_bubble(shown, "client", src)
 	source_label.text = Loc.t("ai_remote") if source == "remote" else Loc.t("ai_local")
 	source_label.add_theme_color_override("font_color", UIKit.C_GOOD if source == "remote" else UIKit.C_MUTED)
 	stage.set_emotion(emotion)
@@ -586,9 +587,14 @@ func _show_summary(r: Dictionary) -> void:
 	var cp := UIKit.panel(UIKit.C_PANEL2, 14, 12)
 	cp.add_child(UIKit.label("«%s»" % r["comment"], 22, Color("ffe8a3")))
 	box.add_child(cp)
-	box.add_child(UIKit.button(Loc.t("next"), func() -> void:
-		call_finished.emit(r)
-		queue_free()))
+	box.add_child(UIKit.button(Loc.t("next"), finish))
+	last_result = r
+	summary_shown = true
+
+
+func finish() -> void:
+	call_finished.emit(last_result)
+	queue_free()
 
 
 func _exit_tree() -> void:

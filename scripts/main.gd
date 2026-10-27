@@ -32,6 +32,8 @@ func _ready() -> void:
 	if "--demo-day" in OS.get_cmdline_user_args():
 		_start_day(1)
 	for a in OS.get_cmdline_user_args():
+		if a == "--soak":
+			add_child(load("res://scripts/debug/soak.gd").new())
 		if a.begins_with("--tour="):
 			var tour: Node = load("res://scripts/debug/tour.gd").new()
 			add_child(tour)

@@ -70,6 +70,16 @@ func system_tts_available() -> bool:
 	return not _tts_voices.is_empty()
 
 
+## ¿Se oirá realmente la voz del cliente con los ajustes actuales?
+func can_speak() -> bool:
+	var mode := str(Settings.get_value("tts_mode"))
+	if mode == "off":
+		return false
+	if mode == "remote" and AI.remote_available():
+		return true
+	return system_tts_available()
+
+
 func tts_status_text() -> String:
 	match str(Settings.get_value("tts_mode")):
 		"off":
