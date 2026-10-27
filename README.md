@@ -6,6 +6,14 @@
 
 *(Nombre provisional del encargo: «Scam Call Center 3D». Propuesto: **TeleTimo 3D**.)*
 
+| | |
+|---|---|
+| ![Menú](docs/capturas/01_menu.jpg) | ![Oficina](docs/capturas/04_jefe_y_descanso.jpg) |
+| ![Llamada](docs/capturas/06_llamada.jpg) | ![Venta ficticia](docs/capturas/07_venta_o_rechazo.jpg) |
+| ![Ordenador](docs/capturas/09_ordenador.jpg) | ![Evaluación del jefe](docs/capturas/12_evaluacion_jefe.jpg) |
+
+*Capturas reales del juego (Linux, renderizado por software).*
+
 ---
 
 ## Características
