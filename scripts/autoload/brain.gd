@@ -119,6 +119,8 @@ func status_text() -> String:
 		"downloading":
 			return "Descargando la IA local…"
 		"missing":
+			if pack_present(llm_pack):
+				return "IA local descargada, aún sin cargar"
 			return "IA local sin descargar: diálogo básico"
 		"unsupported":
 			return "IA local no disponible: diálogo básico"

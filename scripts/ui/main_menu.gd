@@ -27,18 +27,17 @@ func open() -> void:
 	p.offset_top = 30
 	p.offset_bottom = -30
 	add_child(p)
-	panel_box = UIKit.vbox(12)
-	p.add_child(panel_box)
+	panel_box = UIKit.vbox(10)
+	p.add_child(UIKit.scroll(panel_box))
 	_build_main()
 
 
 func _build_main() -> void:
 	for c in panel_box.get_children():
 		c.queue_free()
-	var title := UIKit.label("TELETIMO 3D", 54, UIKit.C_ACCENT)
+	var title := UIKit.label("TELETIMO 3D", 46, UIKit.C_ACCENT)
 	panel_box.add_child(title)
-	panel_box.add_child(UIKit.label("Call center del caos · sátira con clientes de IA", 20, UIKit.C_MUTED))
-	panel_box.add_child(UIKit.spacer(8))
+	panel_box.add_child(UIKit.label("Call center del caos · clientes con IA en tu móvil", 18, UIKit.C_MUTED))
 	var camp: Dictionary = Save.data["campaign"]
 	var has := Save.has_progress()
 	if has:

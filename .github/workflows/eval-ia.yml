@@ -2,7 +2,7 @@ name: Evaluación de la IA local
 
 on:
   push:
-    paths: ["tests/eval/**", "scripts/ai/**", ".github/workflows/eval-ia.yml"]
+    paths: ["tests/eval/**", ".github/workflows/eval-ia.yml"]
   workflow_dispatch:
 
 permissions:
