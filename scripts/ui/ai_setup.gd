@@ -12,6 +12,7 @@ var go_btn: Button
 var later_btn: Button
 var _running := false
 var _done := false
+var _load_requested := false
 
 
 func open() -> void:
@@ -56,22 +57,39 @@ func _start() -> void:
 	later_btn.text = "Seguir en segundo plano"
 	bar.visible = true
 	detail.text = "Conectando…"
-	var ok: bool = await Brain.download_all()
-	if not is_inside_tree():
+	if not Brain.downloading:
+		Brain.download_all()
+
+
+func _process(_delta: float) -> void:
+	if Brain.downloading and not _running:
+		_running = true
+		go_btn.disabled = true
+		bar.visible = true
+		later_btn.text = "Seguir en segundo plano"
+	if not _running or _done:
 		return
-	if ok:
-		detail.text = "Cargando la IA en memoria…"
-		while Brain.llm_state != "ready" and Brain.llm_state != "error" and is_inside_tree():
-			await get_tree().create_timer(0.3).timeout
-		if not is_inside_tree():
-			return
-		Settings.set_value("ai_setup_seen", true)
-		if not is_inside_tree():
-			return
-		detail.text = Brain.status_text()
-		go_btn.text = "¡Listo! A trabajar"
-		go_btn.disabled = false
-		_done = true
+	if Brain.downloading:
+		return
+	if Brain.missing_packs().is_empty():
+		if Brain.llm_state == "ready":
+			_done = true
+			Settings.set_value("ai_setup_seen", true)
+			detail.text = Brain.status_text()
+			go_btn.text = "¡Listo! A trabajar"
+			go_btn.disabled = false
+			bar.value = 100
+		else:
+			if Brain.llm_state == "error" and _load_requested:
+				detail.text = "No se pudo cargar la IA: %s" % Brain.last_error
+				_done = true
+				go_btn.text = "Continuar sin IA"
+				go_btn.disabled = false
+			else:
+				detail.text = "Cargando la IA en memoria…"
+				if Brain.llm_state in ["missing", "error"] and not _load_requested:
+					_load_requested = true
+					Brain.load_all()
 	else:
 		_running = false
 		go_btn.disabled = false

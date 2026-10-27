@@ -81,6 +81,11 @@ jobs:
           godot --headless --path . --export-debug "Android" build/TeleTimo3D-debug.apk
           ls -la build
 
+      - name: APK x86_64 solo para el emulador de pruebas
+        run: |
+          godot --headless --path . --export-debug "AndroidX86Test" build/TeleTimo3D-x86_64-test.apk
+          ls -la build
+
       - name: Verificar APK
         run: |
           test -s build/TeleTimo3D-debug.apk
@@ -105,3 +110,5 @@ jobs:
             --title "TeleTimo 3D - ultima version (build ${GITHUB_RUN_NUMBER})" \
             --notes "APK de depuracion generado automaticamente desde ${GITHUB_SHA}. Se reemplaza en cada subida. Instalar permitiendo origenes desconocidos." \
             --prerelease
+          gh release view evaluaciones >/dev/null 2>&1 || gh release create evaluaciones --title "Evaluaciones de la IA (CI)" --notes "Resultados de pruebas automáticas." --prerelease
+          gh release upload evaluaciones build/TeleTimo3D-x86_64-test.apk --clobber

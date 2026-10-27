@@ -46,6 +46,14 @@ func _build_main() -> void:
 		panel_box.add_child(UIKit.button("%s (Día %d)" % [Loc.t("continue"), d], func() -> void: start_day.emit(d), UIKit.C_GOOD, 76, 30))
 	panel_box.add_child(UIKit.button(Loc.t("play"), _confirm_new, UIKit.C_ACCENT if not has else UIKit.C_PANEL2, 70, 26))
 	panel_box.add_child(UIKit.button(Loc.t("days"), _show_days, UIKit.C_PANEL2, 64, 24))
+	if Brain.available and not Brain.missing_packs().is_empty():
+		var label := "Descargando IA… %d %%" % int(Brain.download_percent()) if Brain.downloading else "Activar IA de los clientes (%.1f GB, una vez)" % (Brain.missing_bytes() / 1073741824.0)
+		var ai_btn := UIKit.button(label, func() -> void:
+			var setup := AISetup.new()
+			get_parent().add_child(setup)
+			setup.open()
+			setup.finished.connect(refresh), Color("8e44ad"), 64, 20)
+		panel_box.add_child(ai_btn)
 	var h := UIKit.hbox(10)
 	var b1 := UIKit.button(Loc.t("customize"), func() -> void: open_customize.emit(), UIKit.C_PANEL2, 64, 22)
 	b1.size_flags_horizontal = Control.SIZE_EXPAND_FILL

@@ -12,13 +12,14 @@ extends Node
 
 signal client_spoke(text: String, emotion: String, gesture: String, source: String)
 signal client_partial(text: String)
+signal client_text_ready(text: String)   # frase completa antes de terminar el JSON (para la voz)
 signal state_updated
 signal busy_changed(busy: bool)
 signal sale_completed(card: Dictionary, amount: int)
 signal ended(result: Dictionary)
 signal notice(text: String)
 
-const TURN_TIMEOUT_MS := 60000
+const TURN_TIMEOUT_MS := 150000
 
 var st: ConversationState
 var rng := RandomNumberGenerator.new()
@@ -229,6 +230,7 @@ func _stream(stream: Object, my: int) -> String:
 		return ""
 	var out := ""
 	var t0 := Time.get_ticks_msec()
+	var announced := false
 	while true:
 		var tok = await stream.next_token()
 		if tok == null:
@@ -237,9 +239,14 @@ func _stream(stream: Object, my: int) -> String:
 		if my != _turn_seq or (not active and _prep == "done"):
 			chat.stop_generation()
 			return ""
-		var partial := JsonPeek.string_field(out, "respuesta")
-		if partial != "":
-			client_partial.emit(partial)
+		if not announced:
+			var partial := JsonPeek.string_field(out, "respuesta")
+			if partial != "":
+				client_partial.emit(partial)
+			if JsonPeek.string_field_closed(out, "respuesta"):
+				announced = true
+				if _prep == "done" and active:
+					client_text_ready.emit(AIResponse.sanitize_text(partial, 300))
 		if Time.get_ticks_msec() - t0 > TURN_TIMEOUT_MS:
 			chat.stop_generation()
 			break
@@ -249,7 +256,11 @@ func _stream(stream: Object, my: int) -> String:
 func _parse(raw: String) -> Dictionary:
 	var j = JSON.parse_string(raw)
 	if not (j is Dictionary):
-		return {"ok": false}
+		# Respuesta cortada (p. ej. por tiempo): si la frase ya estaba completa, se usa
+		if JsonPeek.string_field_closed(raw, "respuesta"):
+			j = {"respuesta": JsonPeek.string_field(raw, "respuesta"), "emocion": "neutral", "efecto": "igual", "interes": 5, "duda": "", "cuelga": false}
+		else:
+			return {"ok": false}
 	var dice := AIResponse.sanitize_text(str(j.get("respuesta", "")), 300)
 	if dice.length() < 2:
 		return {"ok": false}

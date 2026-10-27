@@ -113,7 +113,7 @@ func is_ready() -> bool:
 func status_text() -> String:
 	match llm_state:
 		"ready":
-			return "IA local activa (%s%s)" % [PACKS[llm_pack]["label"].get_slice("(", 1).trim_suffix(")"), ", GPU" if gpu_used else ""]
+			return "IA local activa (%s)" % PACKS[llm_pack]["label"].get_slice("(", 1).trim_suffix(")")
 		"loading":
 			return "Cargando la IA local…"
 		"downloading":

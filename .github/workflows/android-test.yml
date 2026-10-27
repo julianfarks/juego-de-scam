@@ -17,13 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Descargar el APK publicado
-        run: curl -fsSL -o TeleTimo3D-debug.apk https://github.com/julianfarks/juego-de-scam/releases/download/ultima-version/TeleTimo3D-debug.apk && ls -la *.apk
+        run: curl -fsSL -o TeleTimo3D-debug.apk https://github.com/julianfarks/juego-de-scam/releases/download/evaluaciones/TeleTimo3D-x86_64-test.apk && ls -la *.apk
       - name: Activar KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Emulador Android (API 31, x86_64 con traducción ARM)
+      - name: Emulador Android (API 31, x86_64)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 31

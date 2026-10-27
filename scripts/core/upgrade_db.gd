@@ -7,7 +7,7 @@ const UPGRADES := {
 	"auriculares": {"name": "Auriculares con cancelación de excusas", "cost": 120, "day": 1, "cat": "herramientas",
 		"desc": "+25 % de tiempo por llamada.", "mods": {"call_time_mult": 1.25}},
 	"crm": {"name": "CRM Básico «Chismógrafo»", "cost": 160, "day": 1, "cat": "ordenador",
-		"desc": "Muestra la personalidad del cliente antes de llamar.", "mods": {"show_personality": 1}},
+		"desc": "Antes de hablar, te dice qué está haciendo el cliente ahora mismo y cómo fueron tus llamadas anteriores con él.", "mods": {"show_situation": 1}},
 	"crm_pro": {"name": "CRM Pro con fichas de cotilleo", "cost": 380, "day": 3, "cat": "ordenador", "requires": "crm",
 		"desc": "Muestra qué le gusta y qué odia a cada cliente.", "mods": {"show_likes": 1}},
 	"monitor_doble": {"name": "Monitor doble", "cost": 220, "day": 2, "cat": "ordenador",

@@ -65,6 +65,9 @@ func open(p_lead: Dictionary, p_flags: Dictionary) -> void:
 	stage = ClientStage.new()
 	add_child(stage)
 	stage.show_client(lead["client_id"])
+	session = CallSession.new()
+	add_child(session)
+	session.prepare(lead["client_id"], flags)
 	_show_offer_picker()
 
 
@@ -96,6 +99,19 @@ func _show_offer_picker() -> void:
 	var pp := PersonalityDB.get_p(c["personality"])
 	lv.add_child(UIKit.label("Carácter: %s — %s" % [pp["name"], pp["desc"]], 20, UIKit.C_BLUE))
 	lv.add_child(UIKit.label(("IA local: el cliente entenderá lo que le digas." if Brain.is_ready() else "Sin IA cargada: este cliente usará el diálogo básico (reglas)."), 17, UIKit.C_GOOD if Brain.is_ready() else Color("ff9f43")))
+	if m.get("show_situation", 0):
+		var sit := UIKit.label("CRM: preparando ficha…", 18, UIKit.C_BLUE)
+		lv.add_child(sit)
+		var past := []
+		for e in Save.data["crm"]:
+			if e.get("client_id", "") == lead["client_id"]:
+				past.append("día %d: %s" % [int(e["day"]), Economy.OUTCOMES.get(e["outcome"], e["outcome"])])
+		var fill := func() -> void:
+			if is_instance_valid(sit):
+				sit.text = "CRM: %s\nLlamadas anteriores: %s" % [session.situation if session and session.situation != "" else "sin datos", ", ".join(PackedStringArray(past.slice(-3))) if not past.is_empty() else "ninguna"]
+		get_tree().process_frame.connect(fill, CONNECT_ONE_SHOT)
+	else:
+		lv.add_child(UIKit.label("(Con el CRM verías qué está haciendo ahora y tu historial con él)", 16, UIKit.C_MUTED))
 	if m.get("show_likes", 0):
 		lv.add_child(UIKit.label("Le gusta: %s\nOdia: %s" % [", ".join(PackedStringArray(c["likes"])), ", ".join(PackedStringArray(c["dislikes"])) if not c["dislikes"].is_empty() else "nada en especial"], 19, UIKit.C_GOOD))
 	if lead.get("callback", false):
@@ -130,6 +146,8 @@ func _show_offer_picker() -> void:
 
 
 func _abort() -> void:
+	if session:
+		session.cancel_pending()
 	call_finished.emit({})
 	queue_free()
 
@@ -141,10 +159,9 @@ func _begin_call(oid: String) -> void:
 	offer_panel.queue_free()
 	Audio.play("pickup")
 	_build_call_ui()
-	session = CallSession.new()
-	add_child(session)
 	session.client_spoke.connect(_on_client_spoke)
 	session.client_partial.connect(_on_client_partial)
+	session.client_text_ready.connect(_on_client_text_ready)
 	session.state_updated.connect(_refresh_state)
 	session.busy_changed.connect(_on_busy)
 	session.sale_completed.connect(_on_sale)
@@ -330,6 +347,20 @@ func _on_client_spoke(text: String, emotion: String, gesture: String, source: St
 		source_label.add_theme_color_override("font_color", UIKit.C_GOOD if source == "ia" else Color("ff9f43"))
 	stage.set_emotion(emotion)
 	stage.gesture(gesture)
+	if _early_spoken != "" and _early_spoken == text:
+		_early_spoken = ""
+		return
+	_early_spoken = ""
+	stage.speaking = true
+	Voice.speak(text, _voice_profile())
+
+
+var _early_spoken := ""
+
+
+## La frase ya está completa: la voz empieza sin esperar al resto de la respuesta.
+func _on_client_text_ready(text: String) -> void:
+	_early_spoken = text
 	stage.speaking = true
 	Voice.speak(text, _voice_profile())
 
@@ -524,7 +555,11 @@ func _refresh_state() -> void:
 		extra = "\nTe preguntó: «%s»" % st.pending_question["text"]
 	if st.unfulfilled_promises().size() > 0:
 		extra += "\nPromesa pendiente de explicar"
-	obj_label.text = ("Objeciones: " + ", ".join(PackedStringArray(objs)) if not objs.is_empty() else "Sin objeciones pendientes") + extra
+	if st.ai_doubt != "":
+		objs.append(st.ai_doubt)
+	if st.ai_interest >= 0:
+		extra += "\nGanas de comprar (según el cliente): %d/10" % st.ai_interest
+	obj_label.text = ("Dudas: " + ", ".join(PackedStringArray(objs)) if not objs.is_empty() else "Sin dudas pendientes") + extra
 	timer_bar.max_value = st.time_limit
 	timer_bar.value = maxf(0.0, st.time_limit - st.elapsed)
 

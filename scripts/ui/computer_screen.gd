@@ -172,8 +172,7 @@ func _app_phone() -> void:
 		var tag := " [LE DEBES UNA LLAMADA]" if lead.get("callback", false) else ""
 		info.add_child(_dark("%s  %s%s" % [lead["name"], "★".repeat(int(lead["stars"])), tag], 22))
 		var sub: String = "Oferta sugerida: " + OfferDB.get_o(lead["offer"])["name"]
-		if m.get("show_personality", 0):
-			sub += "  ·  " + PersonalityDB.get_p(c["personality"])["name"]
+		sub += "  ·  " + PersonalityDB.get_p(c["personality"])["name"]
 		info.add_child(_dark(sub, 17, Color("555555")))
 		h.add_child(info)
 		if lead["called"]:
@@ -366,7 +365,9 @@ func _app_tools() -> void:
 	b.add_child(h)
 	b.add_child(_dark("Calculadora de nervios", 24))
 	var s_left := Game.shift_left if Game.in_shift else 0.0
-	b.add_child(_dark("Quedan %d min %d s de jornada. Probabilidad de que el jefe pase por tu mesa: %d %%." % [int(s_left) / 60, int(s_left) % 60, 30 + rng.randi() % 60], 20))
+	var ev_left := maxi(0, Game.events_budget - Game.events_done.size()) if Game.in_shift else 0
+	var need := maxi(0, Game.quota() - int(Game.ledger.get("income", 0))) if Game.in_shift else 0
+	b.add_child(_dark("Quedan %d min %d s de jornada, te faltan %s para la cuota y aún pueden pasar %d imprevistos hoy." % [int(s_left) / 60, int(s_left) % 60, UIKit.money(need), ev_left], 20))
 
 
 func _show_crash() -> void:
