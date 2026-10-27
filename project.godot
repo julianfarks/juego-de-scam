@@ -1,0 +1,56 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="TeleTimo 3D"
+config/description="Sátira de oficina 3D: un call center ficticio con clientes controlados por IA. Todo el dinero y las tarjetas son de mentira."
+config/version="0.1.0"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+config/icon="res://assets/icon/icon.png"
+config/use_custom_user_dir=false
+
+[audio]
+
+driver/enable_input=true
+general/text_to_speech=true
+driver/mix_rate=44100
+
+[autoload]
+
+Loc="*res://scripts/autoload/loc.gd"
+Settings="*res://scripts/autoload/settings.gd"
+Save="*res://scripts/autoload/save_system.gd"
+Audio="*res://scripts/autoload/audio_manager.gd"
+Game="*res://scripts/autoload/game_state.gd"
+AI="*res://scripts/autoload/ai_service.gd"
+Voice="*res://scripts/autoload/voice_service.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=0
+window/energy_saving/keep_screen_on=true
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[physics]
+
+common/physics_ticks_per_second=60
+common/max_physics_steps_per_frame=4
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.08, 0.09, 0.12, 1)
+anti_aliasing/quality/msaa_3d=0
+lights_and_shadows/directional_shadow/size=2048
+lights_and_shadows/directional_shadow/size.mobile=1024
