@@ -35,6 +35,7 @@ var model: Object = null            # NobodyWhoModel
 var stt: Object = null              # NobodyWhoSpeechToText
 var vad_source := ""
 var tts_engines: Dictionary = {}    # voz → NobodyWhoTextToSpeech
+var tts_ok := false                 # ¿se cargó Kokoro?
 var llm_pack := "llm_normal"
 var downloading := false
 var _downloader: Downloader
@@ -384,14 +385,27 @@ func load_voice() -> bool:
 		return false
 	voice_state = "loading"
 	state_changed.emit()
+	# Kokoro extrae los datos fonéticos de eSpeak a una carpeta. Por defecto usa una
+	# ruta basada en HOME, que en Android no se puede escribir ("Could not create
+	# espeak data dir"): se le indica una carpeta dentro del almacenamiento del juego.
+	if OS.get_environment("ESPEAK_DATA_PATH") == "":
+		var espeak_dir := ProjectSettings.globalize_path(DIR.path_join("espeak"))
+		DirAccess.make_dir_recursive_absolute(espeak_dir)
+		OS.set_environment("ESPEAK_DATA_PATH", espeak_dir)
 	stt = await ClassDB.class_call_static("NobodyWhoSpeechToText", "create", ProjectSettings.globalize_path(pack_path("stt")), {"language": "es", "quantization": "q4"})
 	vad_source = ProjectSettings.globalize_path(pack_path("vad"))
-	var tts_ok: Object = await get_tts("ef_dora")
-	if stt == null or tts_ok == null:
+	var tts_engine: Object = await get_tts("ef_dora")
+	tts_ok = tts_engine != null
+	if stt == null and not tts_ok:
 		voice_state = "error"
 		last_error = "No se pudieron cargar los modelos de voz"
 		state_changed.emit()
 		return false
+	# Oído y voz son independientes: si falla uno, el otro sigue funcionando.
+	if stt == null:
+		last_error = "No se pudo cargar el reconocimiento de voz (Whisper)"
+	elif not tts_ok:
+		last_error = "No se pudieron cargar las voces neuronales (Kokoro)"
 	voice_state = "ready"
 	state_changed.emit()
 	return true
@@ -460,6 +474,7 @@ func unload() -> void:
 	model = null
 	stt = null
 	tts_engines.clear()
+	tts_ok = false
 	if llm_state == "ready":
 		llm_state = "missing"
 	if voice_state == "ready":

@@ -69,7 +69,7 @@ func _ready() -> void:
 # ------------------------------------------------------------------ Estado
 
 func neural_voice_ready() -> bool:
-	return Brain.voice_state == "ready" and str(Settings.get_value("tts_mode")) == "ia"
+	return Brain.voice_state == "ready" and Brain.tts_ok and str(Settings.get_value("tts_mode")) == "ia"
 
 
 func stt_available() -> bool:
@@ -88,6 +88,8 @@ func tts_status_text() -> String:
 		return "Voces desactivadas (solo subtítulos)"
 	if neural_voice_ready():
 		return "Voces neuronales en el móvil (Kokoro)"
+	if Brain.voice_state == "ready" and not Brain.tts_ok:
+		return "Las voces neuronales no se pudieron cargar: se usa la voz del sistema" if not _system_voices().is_empty() else "Las voces neuronales no se pudieron cargar: solo subtítulos"
 	if Brain.voice_state in ["missing", "downloading", "error"]:
 		return "Voces neuronales sin descargar: se usa la voz del sistema" if not _system_voices().is_empty() else "Sin voces disponibles: solo subtítulos"
 	return "Voz del sistema Android" if not _system_voices().is_empty() else "Sin voces disponibles: solo subtítulos"
@@ -96,6 +98,8 @@ func tts_status_text() -> String:
 func stt_status_text() -> String:
 	match Brain.voice_state:
 		"ready":
+			if Brain.stt == null:
+				return "El reconocimiento de voz no se pudo cargar: usa el modo texto"
 			return "Reconocimiento de voz en el móvil (Whisper)"
 		"loading":
 			return "Cargando reconocimiento de voz…"

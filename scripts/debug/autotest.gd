@@ -80,7 +80,8 @@ func _run() -> void:
 	t0 = Time.get_ticks_msec()
 	while Brain.voice_state in ["loading", "missing"] and Time.get_ticks_msec() - t0 < 300000:
 		await wait(1.0)
-	check(Brain.voice_state == "ready", "modelos de voz cargados (%s)" % Brain.voice_state)
+	check(Brain.voice_state == "ready" and Brain.stt != null, "oído cargado: Whisper (%s)" % Brain.voice_state)
+	check(Brain.tts_ok, "voces neuronales cargadas: Kokoro (%s)" % ("sí" if Brain.tts_ok else Brain.last_error))
 	# 3. Jornada y llamada con IA
 	main._start_day(1)
 	await wait(3.0)
@@ -118,7 +119,7 @@ func _run() -> void:
 	await shot("04_llamada")
 	check(s.ai_turns >= 3, "el cliente respondió con la IA (%d turnos)" % s.ai_turns)
 	# 4. Voz: el cliente habla con la voz neuronal y Whisper entiende una frase sintetizada
-	if Brain.voice_state == "ready":
+	if Brain.tts_ok and Brain.stt != null:
 		var eng: Object = await Brain.get_tts("ef_dora")
 		t0 = Time.get_ticks_msec()
 		var wav: PackedByteArray = await eng.synthesize("¿Y cuánto me va a costar eso al mes?")
