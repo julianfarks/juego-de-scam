@@ -26,6 +26,30 @@ static func _split_url(url: String) -> Dictionary:
 	return {"tls": tls, "host": host, "port": port, "path": path}
 
 
+## En ordenadores detrás de un proxy (empresas, algunas redes) se respetan las
+## variables estándar HTTPS_PROXY y SSL_CERT_FILE. En Android no se usan.
+static func _apply_proxy(http: HTTPClient) -> void:
+	var px := OS.get_environment("HTTPS_PROXY")
+	if px == "":
+		px = OS.get_environment("https_proxy")
+	if px == "":
+		return
+	var hp := px.trim_prefix("http://").trim_suffix("/")
+	if "@" in hp:
+		return  # proxies con usuario y contraseña no admitidos
+	if ":" in hp:
+		http.set_https_proxy(hp.get_slice(":", 0), int(hp.get_slice(":", 1)))
+
+
+static func _tls_options() -> TLSOptions:
+	var ca := OS.get_environment("SSL_CERT_FILE")
+	if ca != "" and FileAccess.file_exists(ca):
+		var cert := X509Certificate.new()
+		if cert.load(ca) == OK:
+			return TLSOptions.client(cert)
+	return TLSOptions.client()
+
+
 ## Descarga url → dest. expected_size > 0 permite comprobar y reanudar.
 ## Devuelve true si el archivo quedó completo.
 func fetch(url: String, dest: String, expected_size: int = -1) -> bool:
@@ -45,7 +69,8 @@ func fetch(url: String, dest: String, expected_size: int = -1) -> bool:
 			have = 0
 		var u := _split_url(current)
 		var http := HTTPClient.new()
-		var opts := TLSOptions.client() if u["tls"] else null
+		var opts := _tls_options() if u["tls"] else null
+		_apply_proxy(http)
 		var err := http.connect_to_host(u["host"], u["port"], opts)
 		if err != OK:
 			last_error = "No se pudo conectar (%d)" % err
