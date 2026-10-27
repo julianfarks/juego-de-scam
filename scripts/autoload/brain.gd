@@ -385,13 +385,18 @@ func load_voice() -> bool:
 		return false
 	voice_state = "loading"
 	state_changed.emit()
-	# Kokoro extrae los datos fonéticos de eSpeak a una carpeta. Por defecto usa una
-	# ruta basada en HOME, que en Android no se puede escribir ("Could not create
-	# espeak data dir"): se le indica una carpeta dentro del almacenamiento del juego.
-	if OS.get_environment("ESPEAK_DATA_PATH") == "":
-		var espeak_dir := ProjectSettings.globalize_path(DIR.path_join("espeak"))
-		DirAccess.make_dir_recursive_absolute(espeak_dir)
-		OS.set_environment("ESPEAK_DATA_PATH", espeak_dir)
+	# Kokoro extrae los datos fonéticos de eSpeak a una carpeta que NobodyWho toma
+	# de NOBODYWHO_ESPEAK_DATA_DIR (su puente de Kotlin la fija en Android, el de
+	# Godot no). Sin ella usa la carpeta temporal del sistema, que en Android no se
+	# puede escribir ("Could not create espeak data dir"). Se usa el almacenamiento del juego.
+	var espeak_dir := ProjectSettings.globalize_path(DIR.path_join("espeak-ng-data"))
+	DirAccess.make_dir_recursive_absolute(espeak_dir)
+	if OS.get_environment("NOBODYWHO_ESPEAK_DATA_DIR") == "":
+		OS.set_environment("NOBODYWHO_ESPEAK_DATA_DIR", espeak_dir)
+	if OS.has_feature("android"):
+		var tmp := ProjectSettings.globalize_path("user://tmp")
+		DirAccess.make_dir_recursive_absolute(tmp)
+		OS.set_environment("TMPDIR", tmp)
 	stt = await ClassDB.class_call_static("NobodyWhoSpeechToText", "create", ProjectSettings.globalize_path(pack_path("stt")), {"language": "es", "quantization": "q4"})
 	vad_source = ProjectSettings.globalize_path(pack_path("vad"))
 	var tts_engine: Object = await get_tts("ef_dora")
