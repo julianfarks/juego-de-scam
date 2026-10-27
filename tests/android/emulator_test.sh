@@ -16,6 +16,28 @@ fi
 echo "APK instalado"; cat $OUT/install.txt
 adb shell pm grant $PKG android.permission.RECORD_AUDIO || true
 adb shell run-as $PKG mkdir -p files
+
+# --- Bisección del audio: ¿qué componente hace que el juego se cierre? ---
+echo "configuracion,sigue_vivo_tras_25s" > $OUT/bisect.csv
+SURVIVOR=""
+for cfg in "ninguno" "sin_musica" "sin_captura" "sin_espectro" "sin_ambiente" "sin_efectos" "sin_musica,sin_captura,sin_espectro,sin_ambiente,sin_efectos"; do
+  adb shell am force-stop $PKG
+  if [ "$cfg" = "ninguno" ]; then adb shell run-as $PKG rm -f files/audio_flags.txt; else adb shell "echo $cfg | run-as $PKG sh -c 'cat > files/audio_flags.txt'"; fi
+  adb logcat -c
+  adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1 > /dev/null
+  sleep 25
+  if adb shell pidof $PKG > /dev/null; then ALIVE=si; [ -z "$SURVIVOR" ] && SURVIVOR=$cfg; else ALIVE=no; fi
+  echo "$cfg,$ALIVE" | tee -a $OUT/bisect.csv
+  adb logcat -d | grep -E "F DEBUG|AUDIO_FLAGS|backtrace|#0[0-9] pc" | head -25 > "$OUT/bisect_${cfg//,/+}.txt" || true
+done
+adb shell am force-stop $PKG
+if [ -n "$SURVIVOR" ] && [ "$SURVIVOR" != "ninguno" ]; then
+  adb shell "echo $SURVIVOR | run-as $PKG sh -c 'cat > files/audio_flags.txt'"
+else
+  adb shell run-as $PKG rm -f files/audio_flags.txt
+fi
+echo "Configuración para la prueba completa: ${SURVIVOR:-ninguna sobrevive}"
+
 adb shell run-as $PKG touch files/autotest.flag
 adb logcat -c
 adb shell monkey -p $PKG -c android.intent.category.LAUNCHER 1

@@ -83,6 +83,13 @@ jobs:
 
       - name: APK x86_64 solo para el emulador de pruebas
         run: |
+          # NobodyWho x86_64-android enlaza ONNX Runtime dinámicamente: se añade solo a este APK de pruebas
+          for v in 1.31.0 1.30.0 1.29.0 1.28.0 1.27.0 1.26.0 1.25.0 1.24.0 1.23.2; do
+            if curl -fsSL -o ort.aar https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/$v/onnxruntime-android-$v.aar; then echo "ONNX Runtime Android $v"; break; fi
+          done
+          unzip -o -j -q ort.aar "jni/x86_64/libonnxruntime.so" -d addons/nobodywho/
+          readelf -d addons/nobodywho/libonnxruntime.so | grep NEEDED || true
+          printf '\n[dependencies]\nandroid.x86_64 = {"res://addons/nobodywho/libonnxruntime.so": ""}\n' >> addons/nobodywho/nobodywho.gdextension
           godot --headless --path . --export-debug "AndroidX86Test" build/TeleTimo3D-x86_64-test.apk
           ls -la build
 

@@ -20,8 +20,14 @@ var spectrum: AudioEffectSpectrumAnalyzerInstance
 var capture_effect: AudioEffectCapture
 
 
+var test_flags: PackedStringArray = []   # solo pruebas: user://audio_flags.txt
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	if FileAccess.file_exists("user://audio_flags.txt"):
+		test_flags = FileAccess.get_file_as_string("user://audio_flags.txt").strip_edges().split(",", false)
+		print("AUDIO_FLAGS ", test_flags)
 	_setup_buses()
 	_build_sounds()
 	for i in POOL_SIZE:
@@ -44,8 +50,9 @@ func _ready() -> void:
 		if k.begins_with("vol_"):
 			apply_volumes())
 	# La música se genera en segundo plano para no retrasar el arranque.
-	_music_thread = Thread.new()
-	_music_thread.start(_generate_music)
+	if not "sin_musica" in test_flags:
+		_music_thread = Thread.new()
+		_music_thread.start(_generate_music)
 
 
 func _generate_music() -> void:
@@ -77,12 +84,22 @@ func _setup_buses() -> void:
 			AudioServer.set_bus_name(idx, name)
 			AudioServer.set_bus_send(idx, "Master")
 	var voice_idx := AudioServer.get_bus_index("Voice")
+	if "sin_espectro" in test_flags:
+		_setup_mic_bus()
+		return
 	var an := AudioEffectSpectrumAnalyzer.new()
 	an.buffer_length = 0.1
 	an.fft_size = AudioEffectSpectrumAnalyzer.FFT_SIZE_512
 	AudioServer.add_bus_effect(voice_idx, an)
 	spectrum = AudioServer.get_bus_effect_instance(voice_idx, 0) as AudioEffectSpectrumAnalyzerInstance
+	_setup_mic_bus()
+
+
+func _setup_mic_bus() -> void:
 	var mic_idx := AudioServer.get_bus_index("Mic")
+	if "sin_captura" in test_flags:
+		capture_effect = AudioEffectCapture.new()
+		return
 	capture_effect = AudioEffectCapture.new()
 	capture_effect.buffer_length = 3.0
 	AudioServer.add_bus_effect(mic_idx, capture_effect)
@@ -134,6 +151,8 @@ func _set_bus_lin(bus: String, v: float) -> void:
 
 ## Reproduce un efecto. Evita repetir el mismo sonido demasiado seguido y varía el tono.
 func play(name: String, volume_db := 0.0, pitch_var := 0.06, min_interval := 0.04) -> void:
+	if "sin_efectos" in test_flags:
+		return
 	if name == "type":
 		name = "type%d" % (randi() % 4)
 	if not sounds.has(name):
@@ -195,6 +214,8 @@ func duck_music(on: bool) -> void:
 
 
 func set_ambient(on: bool) -> void:
+	if "sin_ambiente" in test_flags:
+		on = false
 	ambient_on = on
 	if on and not _ambient_player.playing:
 		_ambient_player.play()
