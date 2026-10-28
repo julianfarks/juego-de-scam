@@ -1,8 +1,10 @@
 class_name CallScreen
 extends Control
-## Pantalla de llamada: selección de oferta, «videollamada» 3D del cliente,
-## transcripción con subtítulos, micrófono con estados claros, modo texto, frases
-## rápidas, cierre de venta (reglas), tarjeta ficticia y resumen final.
+## Pantalla de llamada: ficha del cliente, «videollamada» 3D, conversación LIBRE por
+## voz o texto (el jugador propone lo que quiera; el catálogo de ideas es opcional),
+## estado claro de cada fase (preparando, tu turno, pensando, escuchando,
+## transcribiendo, hablando, error), errores recuperables (Reintentar / Seguir sin
+## IA), cierre de venta por reglas, tarjeta ficticia y resumen con la transacción.
 
 signal call_finished(result: Dictionary)
 
@@ -19,7 +21,7 @@ var lead: Dictionary
 var flags: Dictionary
 var session: CallSession
 var stage: ClientStage
-var offer_id := ""
+var opening_idea := ""          # texto propuesto antes de llamar (opcional, editable)
 var last_client_line := ""
 var silence_requested := false
 var soundboard_left := 1
@@ -50,6 +52,12 @@ var silence_btn: Button
 var hang_btn: Button
 var thinking_label: Label
 var offer_panel: Control
+var proposal_label: Label
+var status_chip: PanelContainer
+var status_label: Label
+var error_panel: PanelContainer
+var error_label: Label
+var _think_t0 := 0
 
 
 func open(p_lead: Dictionary, p_flags: Dictionary) -> void:
@@ -58,8 +66,12 @@ func open(p_lead: Dictionary, p_flags: Dictionary) -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	theme = UIKit.theme()
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# La oficina 3D queda tapada durante la llamada: se deja de dibujar para que el
+	# procesador y la GPU queden libres para la IA (el vídeo del cliente usa su propio
+	# viewport y sigue funcionando).
+	get_viewport().disable_3d = true
 	var bg := ColorRect.new()
-	bg.color = Color(0.07, 0.08, 0.12, 0.96)
+	bg.color = Color(0.07, 0.08, 0.12, 1.0)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	stage = ClientStage.new()
@@ -71,7 +83,14 @@ func open(p_lead: Dictionary, p_flags: Dictionary) -> void:
 	_show_offer_picker()
 
 
-# ------------------------------------------------------------ Selección de oferta
+# ------------------------------------------------------------ Ficha antes de llamar
+
+func _short_name() -> String:
+	var parts := String(ClientDB.get_c(lead["client_id"])["name"]).split(" ")
+	if parts.size() > 1 and parts[0] in ["Doña", "Don", "Ing.", "Prof.", "Dr.", "Dra.", "Sr.", "Sra."]:
+		return parts[0] + " " + parts[1]
+	return parts[0]
+
 
 func _show_offer_picker() -> void:
 	var c := ClientDB.get_c(lead["client_id"])
@@ -86,19 +105,19 @@ func _show_offer_picker() -> void:
 	margin.add_child(h)
 	var lv := UIKit.vbox(10)
 	lv.custom_minimum_size = Vector2(420, 0)
-	h.add_child(lv)
+	h.add_child(UIKit.scroll(lv))
 	var vid := TextureRect.new()
 	vid.texture = stage.get_texture()
 	vid.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	vid.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	vid.custom_minimum_size = Vector2(420, 340)
+	vid.custom_minimum_size = Vector2(420, 300)
 	lv.add_child(vid)
 	lv.add_child(UIKit.label(c["name"], 30, UIKit.C_ACCENT))
 	var stars := "★".repeat(int(lead["stars"])) + "☆".repeat(3 - int(lead["stars"]))
 	lv.add_child(UIKit.label("Dificultad: " + stars, 22))
 	var pp := PersonalityDB.get_p(c["personality"])
 	lv.add_child(UIKit.label("Carácter: %s — %s" % [pp["name"], pp["desc"]], 20, UIKit.C_BLUE))
-	lv.add_child(UIKit.label(("IA local: el cliente entenderá lo que le digas." if Brain.is_ready() else "Sin IA cargada: este cliente usará el diálogo básico (reglas)."), 17, UIKit.C_GOOD if Brain.is_ready() else Color("ff9f43")))
+	lv.add_child(UIKit.label(("IA local lista: el cliente entenderá lo que le digas." if Brain.is_ready() else "IA no disponible (%s): este cliente usará el diálogo básico." % Brain.status_text().to_lower()), 17, UIKit.C_GOOD if Brain.is_ready() else Color("ff9f43")))
 	if m.get("show_situation", 0):
 		var sit := UIKit.label("CRM: preparando ficha…", 18, UIKit.C_BLUE)
 		lv.add_child(sit)
@@ -110,39 +129,39 @@ func _show_offer_picker() -> void:
 			if is_instance_valid(sit):
 				sit.text = "CRM: %s\nLlamadas anteriores: %s" % [session.situation if session and session.situation != "" else "sin datos", ", ".join(PackedStringArray(past.slice(-3))) if not past.is_empty() else "ninguna"]
 		get_tree().process_frame.connect(fill, CONNECT_ONE_SHOT)
-	else:
-		lv.add_child(UIKit.label("(Con el CRM verías qué está haciendo ahora y tu historial con él)", 16, UIKit.C_MUTED))
 	if m.get("show_likes", 0):
 		lv.add_child(UIKit.label("Le gusta: %s\nOdia: %s" % [", ".join(PackedStringArray(c["likes"])), ", ".join(PackedStringArray(c["dislikes"])) if not c["dislikes"].is_empty() else "nada en especial"], 19, UIKit.C_GOOD))
 	if lead.get("callback", false):
 		lv.add_child(UIKit.label("Te pidió que le volvieras a llamar: empieza con más confianza.", 19, UIKit.C_GOOD))
+	# Derecha: llamada libre + ideas opcionales
 	var rv := UIKit.vbox(10)
 	rv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(rv)
-	rv.add_child(UIKit.label("Elige qué oferta ficticia vas a proponer", 28))
-	var list := UIKit.vbox(8)
+	rv.add_child(UIKit.label("Llamada libre", 30))
+	rv.add_child(UIKit.label("Vende lo que quieras: un queso artesanal, hierbas, jardinería, un seguro absurdo… Puedes inventarlo sobre la marcha, cambiar de idea, negociar el precio o bromear. Habla por el micrófono o escribe.", 19, UIKit.C_MUTED))
+	var idea := LineEdit.new()
+	idea.placeholder_text = "Tu primera frase (opcional): «Le llamo para ofrecerle…»"
+	idea.custom_minimum_size = Vector2(0, 60)
+	idea.add_theme_font_size_override("font_size", 21)
+	idea.max_length = 300
+	idea.text_changed.connect(func(t: String) -> void: opening_idea = t)
+	rv.add_child(idea)
+	var call_btn := UIKit.button("Llamar", func() -> void: _begin_call(), UIKit.C_GOOD, 76, 30)
+	rv.add_child(call_btn)
+	rv.add_child(UIKit.label("¿Sin ideas? Catálogo opcional (toca uno para usarlo como primera frase; puedes editarla):", 18, UIKit.C_MUTED))
+	var list := UIKit.vbox(6)
 	for oid in OfferDB.unlocked_for_day(Game.day):
 		var o := OfferDB.get_o(oid)
-		var row := UIKit.panel(UIKit.C_PANEL2 if oid != lead["offer"] else Color("3d5a80"), 14, 10)
-		var rh := UIKit.hbox(10)
-		row.add_child(rh)
-		var info := UIKit.vbox(2)
-		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		info.add_child(UIKit.label("%s  —  ref. %s" % [o["name"], UIKit.money(int(o["price"]))], 22))
-		var sub := String(o["pitch"])
-		if oid == lead["offer"]:
-			sub = "[Sugerida] " + sub
-		if m.get("show_likes", 0):
-			var aff := ClientDB.offer_affinity(lead["client_id"], oid)
-			sub += "  (afinidad: %s)" % ("alta" if aff > 1.1 else ("baja" if aff < 0.9 else "normal"))
-		info.add_child(UIKit.label(sub, 17, UIKit.C_MUTED))
-		rh.add_child(info)
-		var b := UIKit.button("Llamar", _begin_call.bind(oid), UIKit.C_GOOD, 60, 22)
-		b.custom_minimum_size = Vector2(130, 60)
-		rh.add_child(b)
-		list.add_child(row)
-	rv.add_child(UIKit.scroll(list))
-	rv.add_child(UIKit.button("No llamar ahora", func() -> void: _abort(), UIKit.C_PANEL2, 60, 22))
+		var pitch := Persona.catalog_pitch(oid)
+		var b := UIKit.button("%s — ref. %s" % [o["name"], UIKit.money(int(o["price"]))], func() -> void:
+			idea.text = pitch
+			opening_idea = pitch, UIKit.C_PANEL2, 52, 18)
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		list.add_child(b)
+	var sc := UIKit.scroll(list)
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rv.add_child(sc)
+	rv.add_child(UIKit.button("No llamar ahora", func() -> void: _abort(), UIKit.C_PANEL2, 56, 20))
 
 
 func _abort() -> void:
@@ -154,8 +173,7 @@ func _abort() -> void:
 
 # ------------------------------------------------------------ Llamada
 
-func _begin_call(oid: String) -> void:
-	offer_id = oid
+func _begin_call() -> void:
 	offer_panel.queue_free()
 	Audio.play("pickup")
 	_build_call_ui()
@@ -164,6 +182,9 @@ func _begin_call(oid: String) -> void:
 	session.client_text_ready.connect(_on_client_text_ready)
 	session.state_updated.connect(_refresh_state)
 	session.busy_changed.connect(_on_busy)
+	session.phase_changed.connect(_on_phase)
+	session.ai_error.connect(_on_ai_error)
+	session.proposal_changed.connect(func(_t: String) -> void: _refresh_state())
 	session.sale_completed.connect(_on_sale)
 	session.ended.connect(_on_ended)
 	session.notice.connect(func(t: String) -> void: _system_line(t))
@@ -173,8 +194,10 @@ func _begin_call(oid: String) -> void:
 	Voice.speech_finished.connect(_on_speech_finished)
 	Voice.reset_state()
 	Game.on_call = true
-	thinking_label.text = "Sonando… el cliente va a descolgar"
-	session.start(lead["client_id"], offer_id, Game.day, Game.mods(), flags)
+	if opening_idea.strip_edges() != "":
+		text_edit.text = opening_idea.strip_edges()
+	session.start(lead["client_id"], Game.day, Game.mods(), flags)
+	_on_phase(session.phase)
 	_on_mic_state(Voice.mic_state)
 	if Game.is_event("phone_outage"):
 		_system_line("La centralita está caída…")
@@ -220,7 +243,10 @@ func _build_call_ui() -> void:
 	var m := Game.mods()
 	pers_label = UIKit.label("Carácter: " + PersonalityDB.get_p(c["personality"])["name"], 18, UIKit.C_BLUE)
 	left.add_child(pers_label)
-	left.add_child(UIKit.label("Oferta: " + OfferDB.get_o(offer_id)["name"], 18, UIKit.C_MUTED))
+	var pp := UIKit.panel(Color("1d2a3a"), 12, 8)
+	proposal_label = UIKit.label("Propuesta: todavía no le has ofrecido nada", 18, Color("cfe3ff"))
+	pp.add_child(proposal_label)
+	left.add_child(pp)
 	for k in [["trust", "Confianza", UIKit.C_GOOD], ["patience", "Paciencia", UIKit.C_BLUE], ["suspicion", "Sospecha", UIKit.C_BAD], ["understanding", "Comprensión", UIKit.C_ACCENT]]:
 		var row := UIKit.hbox(8)
 		var l := UIKit.label(k[1], 18)
@@ -243,8 +269,35 @@ func _build_call_ui() -> void:
 	tp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tp.add_child(transcript_scroll)
 	right.add_child(tp)
-	thinking_label = UIKit.label("", 20, UIKit.C_ACCENT)
-	right.add_child(thinking_label)
+	# Estado de la llamada (siempre visible) + panel de error recuperable
+	var sh := UIKit.hbox(10)
+	status_chip = UIKit.panel(Color("34495e"), 12, 6)
+	status_label = UIKit.label("Preparando al cliente…", 20, Color.WHITE)
+	status_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	status_chip.add_child(status_label)
+	sh.add_child(status_chip)
+	thinking_label = UIKit.label("", 18, UIKit.C_MUTED)
+	thinking_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sh.add_child(thinking_label)
+	right.add_child(sh)
+	error_panel = UIKit.panel(Color("5b2c2c"), 12, 10)
+	var ev := UIKit.vbox(6)
+	error_panel.add_child(ev)
+	error_label = UIKit.label("", 19, Color("ffd6d6"))
+	ev.add_child(error_label)
+	var eh := UIKit.hbox(8)
+	ev.add_child(eh)
+	var rb := UIKit.button("Reintentar", func() -> void:
+		error_panel.visible = false
+		session.retry(), UIKit.C_GOOD, 56, 20)
+	rb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	eh.add_child(rb)
+	eh.add_child(UIKit.button("Seguir sin IA", func() -> void:
+		error_panel.visible = false
+		session.continue_basic(), Color("b9770e"), 56, 18))
+	eh.add_child(UIKit.button("Ver detalle", func() -> void: _show_ai_log(), UIKit.C_PANEL2, 56, 18))
+	error_panel.visible = false
+	right.add_child(error_panel)
 	# Micrófono + texto
 	var mic_row := UIKit.hbox(12)
 	right.add_child(mic_row)
@@ -306,8 +359,7 @@ func _bubble(text: String, who: String, extra := "") -> void:
 	var p := UIKit.panel(Color("2f6690") if who == "player" else (Color("3a3f58") if who == "client" else Color(0.3, 0.25, 0.1, 0.8)), 14, 10)
 	var v := UIKit.vbox(2)
 	p.add_child(v)
-	var c := ClientDB.get_c(lead["client_id"])
-	var head := "Tú" if who == "player" else (String(c["name"]).split(" ")[0] if who == "client" else "Sistema")
+	var head := "Tú" if who == "player" else (_short_name() if who == "client" else "Sistema")
 	if extra != "":
 		head += "  ·  " + extra
 	v.add_child(UIKit.label(head, 16, UIKit.C_MUTED))
@@ -404,7 +456,10 @@ func _say(text: String, via_voice: bool) -> void:
 	if text == "":
 		return
 	if session.busy:
-		_system_line("Espera, el cliente todavía está pensando.")
+		_system_line("Espera: %s todavía está contestando (puedes pulsar Cancelar)." % _short_name())
+		return
+	if session.phase == "error":
+		_system_line("La IA ha fallado: pulsa Reintentar o Seguir sin IA.")
 		return
 	Voice.stop_speaking()
 	_bubble(text, "player", "voz" if via_voice else "texto")
@@ -423,7 +478,9 @@ func _ask_payment() -> void:
 	if session == null or not session.active or session.busy:
 		return
 	Voice.stop_speaking()
-	_bubble("¿Me facilita los datos de pago para completar el pedido?", "player", "acción")
+	if session.phase == "error":
+		return
+	_bubble("¿Entonces le apunto? ¿Me facilita los datos de pago para completar el pedido?", "player", "acción")
 	session.attempt_close()
 
 
@@ -470,9 +527,52 @@ func _cancel() -> void:
 
 func _on_busy(b: bool) -> void:
 	Voice.set_processing(b)
-	thinking_label.text = ("%s está pensando…" % String(ClientDB.get_c(lead["client_id"])["name"]).split(" ")[0]) if b else ""
-	close_btn.disabled = b
+	close_btn.disabled = b or session.phase == "error"
 	send_btn.disabled = b
+	if b:
+		_think_t0 = Time.get_ticks_msec()
+
+
+## Fase de la llamada → texto y color del indicador de estado.
+func _on_phase(p: String) -> void:
+	if status_label == null:
+		return
+	var txt: String = {
+		"preparando": "Preparando a %s…" % _short_name(),
+		"listo": "Tu turno: habla o escribe",
+		"pensando": "%s está pensando…" % _short_name(),
+		"error": "La IA ha fallado",
+		"terminada": "Llamada terminada",
+	}.get(p, p)
+	var col: Color = {"preparando": Color("7d6608"), "listo": Color("1e8449"), "pensando": Color("b9770e"), "error": Color("922b21"), "terminada": Color("34495e")}.get(p, Color("34495e"))
+	status_label.text = txt
+	status_chip.add_theme_stylebox_override("panel", UIKit.flat(col, 12))
+	if p != "error" and error_panel:
+		error_panel.visible = false
+	if close_btn:
+		close_btn.disabled = p != "listo"
+
+
+func _on_ai_error(message: String, code: String) -> void:
+	error_label.text = "%s.\nPuedes reintentar (se abre una conversación nueva con la memoria de esta llamada), seguir con el diálogo básico o colgar.\n(código: %s)" % [message, code]
+	error_panel.visible = true
+	_remove_partial()
+
+
+func _show_ai_log() -> void:
+	var md := UIKit.modal(self, 900)
+	var box: VBoxContainer = md["box"]
+	box.add_child(UIKit.label("Registro técnico de la IA", 26, UIKit.C_ACCENT))
+	var te := TextEdit.new()
+	te.text = AILog.text().right(6000)
+	te.editable = false
+	te.custom_minimum_size = Vector2(840, 420)
+	te.add_theme_font_size_override("font_size", 15)
+	box.add_child(te)
+	var h := UIKit.hbox(10)
+	box.add_child(h)
+	h.add_child(UIKit.button("Copiar", func() -> void: DisplayServer.clipboard_set(AILog.text()), UIKit.C_BLUE))
+	h.add_child(UIKit.button("Cerrar", func() -> void: md["layer"].queue_free(), UIKit.C_PANEL2))
 
 
 # ------------------------------------------------------------ Micrófono
@@ -484,6 +584,9 @@ func _on_mic_pressed() -> void:
 		"transcribing", "processing":
 			pass
 		_:
+			if session and session.phase == "error":
+				_system_line("La IA ha fallado: pulsa Reintentar o Seguir sin IA antes de hablar.")
+				return
 			if not bool(Settings.get_value("mic_consent")):
 				_ask_mic_consent()
 				return
@@ -562,6 +665,15 @@ func _refresh_state() -> void:
 	obj_label.text = ("Dudas: " + ", ".join(PackedStringArray(objs)) if not objs.is_empty() else "Sin dudas pendientes") + extra
 	timer_bar.max_value = st.time_limit
 	timer_bar.value = maxf(0.0, st.time_limit - st.elapsed)
+	if proposal_label:
+		var ptxt := "Propuesta: " + (st.proposal if st.proposal != "" else "todavía no le has ofrecido nada")
+		if st.stated_price > 0:
+			ptxt += "\nPrecio dicho: %s%s" % [UIKit.money(st.stated_price), ("  ×%d = %s" % [st.quantity, UIKit.money(st.stated_price * st.quantity)]) if st.quantity > 1 else ""]
+		else:
+			ptxt += "\nPrecio: aún no lo has dicho"
+		if st.contradictions.size() > 0:
+			ptxt += "\nContradicciones de precio: %d" % st.contradictions.size()
+		proposal_label.text = ptxt
 
 
 func _process(delta: float) -> void:
@@ -575,6 +687,13 @@ func _process(delta: float) -> void:
 		timer_bar.value = maxf(0.0, session.st.time_limit - session.st.elapsed)
 	if mic_level:
 		mic_level.value = Voice.mic_level
+	if thinking_label and session:
+		if session.busy:
+			thinking_label.text = "%d s · Cancelar para cortar" % int((Time.get_ticks_msec() - _think_t0) / 1000.0)
+		elif Voice.mic_state in ["listening", "transcribing", "speaking"]:
+			thinking_label.text = {"listening": "Escuchando tu voz…", "transcribing": "Pasando tu voz a texto…", "speaking": "%s habla" % _short_name()}[Voice.mic_state]
+		else:
+			thinking_label.text = ""
 
 
 func _on_sale(card: Dictionary, amount: int) -> void:
@@ -625,13 +744,19 @@ func _show_summary(r: Dictionary) -> void:
 	box.add_child(UIKit.label(r["outcome_text"], 28, UIKit.C_GOOD if good else UIKit.C_BAD))
 	var lines := [
 		"Cliente: %s" % r["client_name"],
-		"Oferta: %s" % r["offer_name"],
+		"Propuesta: %s" % r["offer_name"],
 		"Duración: %d s  ·  Turnos: %d" % [r["duration"], r["turns"]],
-		"Objeciones resueltas: %d (pendientes: %d)" % [r["objections_resolved"], r["objections_pending"]],
-		"Contradicciones: %d" % r["contradictions"],
-		"Cantidad ficticia: %s" % UIKit.money(int(r.get("final_amount", 0))),
-		("Respuestas: %d de la IA local (media %.1f s)" % [r["ai_turns"], r["avg_turn_ms"] / 1000.0]) if r["mode"] == "ia" else "Respuestas: diálogo básico por reglas (la IA no estaba cargada)",
+		"Objeciones resueltas: %d (pendientes: %d)  ·  Contradicciones: %d" % [r["objections_resolved"], r["objections_pending"], r["contradictions"]],
 	]
+	if good:
+		lines.append("Transacción ficticia: %s × %d = %s" % [UIKit.money(int(r.get("unit_price", 0))), int(r.get("quantity", 1)), UIKit.money(int(r.get("final_amount", 0)))])
+		lines.append("Tu comisión: +%s  ·  Saldo: %s" % [UIKit.money(int(r.get("final_commission", 0))), UIKit.money(int(Save.data["money"]))])
+	elif int(r.get("final_amount", 0)) == 0 and r["outcome"] in ["interested", "callback"]:
+		lines.append("Sin venta, pero queda interesado (pequeño incentivo).")
+	if r["mode"] == "ia" or int(r.get("ai_turns", 0)) > 0:
+		lines.append("Respuestas: %d de la IA local (media %.1f s)%s%s" % [r["ai_turns"], r["avg_turn_ms"] / 1000.0, (" · %d del diálogo básico" % r["basic_turns"]) if int(r["basic_turns"]) > 0 else "", (" · %d errores de la IA" % r["ai_errors"]) if int(r.get("ai_errors", 0)) > 0 else ""])
+	else:
+		lines.append("Respuestas: diálogo básico por reglas (sin IA)")
 	for l in lines:
 		box.add_child(UIKit.label(l, 21))
 	var q := Game.quota()
@@ -653,6 +778,8 @@ func finish() -> void:
 
 func _exit_tree() -> void:
 	Game.on_call = false
+	if get_viewport():
+		get_viewport().disable_3d = false
 	if Voice.transcription_ready.is_connected(_on_transcription):
 		Voice.transcription_ready.disconnect(_on_transcription)
 		Voice.transcription_failed.disconnect(_on_transcription_failed)

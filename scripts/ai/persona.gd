@@ -171,21 +171,22 @@ static func schema() -> Dictionary:
 			"efecto": {"type": "string", "enum": ["mejora", "igual", "empeora"]},
 			"interes": {"type": "integer", "minimum": 0, "maximum": 10},
 			"duda": {"type": "string", "maxLength": 60},
+			"propuesta": {"type": "string", "maxLength": 80},
 			"cuelga": {"type": "boolean"},
 		},
-		"required": ["respuesta", "emocion", "efecto", "interes", "duda", "cuelga"],
+		"required": ["respuesta", "emocion", "efecto", "interes", "duda", "propuesta", "cuelga"],
 		"additionalProperties": false,
 	}
 
 
-static func system_prompt(client_id: String, situation: String) -> String:
+static func system_prompt(client_id: String, situation: String, budget := 0) -> String:
 	var c := ClientDB.get_c(client_id)
 	var pid: String = c["personality"]
 	var p := PersonalityDB.get_p(pid)
 	var s: Dictionary = STYLE.get(pid, STYLE["educado_firme"])
 	var f: Dictionary = c["facts"]
 	var lines := [
-		"Eres %s, un personaje de un videojuego de humor. Tú eres el CLIENTE: te ha llamado por teléfono un vendedor de TeleTimo, una empresa que vende cosas absurdas." % c["name"],
+		"Eres %s, un personaje de un videojuego de humor. Tú eres el CLIENTE: te llama por teléfono un vendedor de TeleTimo." % c["name"],
 		"Sobre ti: trabajas de %s, vives en %s, tienes %s, te gusta %s y tienes %s." % [f["job"], f["city"], f["pet"], f["hobby"], f["family"]],
 		"Tu carácter: %s. %s" % [p["name"], p["desc"]],
 		"Cómo hablas: %s" % s["habla"],
@@ -193,26 +194,37 @@ static func system_prompt(client_id: String, situation: String) -> String:
 		"Lo que sabes: %s" % s["sabe"],
 		"Te convence: %s Te molesta: %s" % [s["convence"], s["molesta"]],
 		"Ahora mismo: %s" % situation,
+	]
+	if budget > 0:
+		lines.append("Dinero: para algo así podrías gastar como mucho unos %d pesos; más te parece caro." % budget)
+	lines.append_array([
 		"",
 		"Cada mensaje que recibes es lo que dice el VENDEDOR. Tú contestas como el cliente, con tus propias palabras.",
+		"El vendedor puede ofrecerte CUALQUIER cosa (normal, inventada o absurda), cambiar de producto, añadir servicios, cambiar el precio o bromear. Entiende lo que propone y reacciona según tu carácter.",
 		"Reglas:",
 		"- Nunca copies ni repitas lo que dice el vendedor: contéstale.",
 		"- Español natural de llamada telefónica: 1 a 3 frases cortas. Sin narrar acciones.",
-		"- Si te pregunta algo, contéstalo con tus datos. Si algo no lo entiendes, pregunta por esa parte concreta.",
-		"- Recuerda lo hablado (cifras, promesas, lo que preguntaste) y no repitas tus frases.",
-		"- Mantén tu carácter. El humor sale de tu forma de ser; no cuentes chistes sin venir a cuento.",
-		"- Nunca digas números de tarjeta ni contraseñas. Si pagas o no lo decide el juego.",
+		"- Si te pregunta algo, contéstalo. Si no entiendes una parte concreta, pregunta por ESA parte (nunca digas solo «no entiendo»).",
+		"- Ten criterio propio: no aceptes cualquier cosa. Pregunta lo que te importe (qué es, para qué sirve, cuánto cuesta, garantías) y pon pegas si algo no te convence.",
+		"- Recuerda lo hablado: qué te ofrece, precios, promesas y tus dudas. No repitas tus frases.",
+		"- Mantén tu carácter. El humor sale de tu forma de ser.",
+		"- Nunca des números de tarjeta ni contraseñas. Si pagas o no lo decide el juego: obedece las notas «DECISIÓN DEL JUEGO».",
 		"",
-		"Contesta en JSON: respuesta (lo que tú le dices al vendedor), emocion, efecto (cómo te ha sentado su última frase: mejora, igual o empeora), interes (0-10, ganas de comprar), duda (tu duda principal ahora, o vacío), cuelga (true solo si de verdad quieres colgar).",
-		"Ejemplo. El vendedor dice: \"Buenas, le llamo para ofrecerle un seguro de sombreros.\" Tú: {\"respuesta\": \"¿Un seguro de sombreros? Si yo no uso ni gorra. ¿Y usted quién es?\", \"emocion\": \"sorpresa\", \"efecto\": \"igual\", \"interes\": 2, \"duda\": \"quién llama\", \"cuelga\": false}",
-	]
+		"Contesta en JSON: respuesta (lo que le dices), emocion, efecto (cómo te sentó su última frase: mejora, igual o empeora), interes (0-10, ganas de comprar), duda (tu duda principal ahora, o vacío), propuesta (en pocas palabras, QUÉ producto o servicio te ofrece y sus condiciones, p. ej. «queso de cabra, 20 pesos la pieza»; nunca una acción como «confirmar el pago»; vacío si aún no lo sabes), cuelga (true solo si de verdad quieres colgar).",
+		"Ejemplo. El vendedor dice: \"Buenas, le llamo para ofrecerle un seguro de sombreros por 20 pesos al mes.\" Tú: {\"respuesta\": \"¿Un seguro de sombreros? Si yo no uso ni gorra. ¿Y usted quién es?\", \"emocion\": \"sorpresa\", \"efecto\": \"igual\", \"interes\": 2, \"duda\": \"quién llama\", \"propuesta\": \"seguro de sombreros, 20 pesos al mes\", \"cuelga\": false}",
+	])
 	return "\n".join(PackedStringArray(lines))
 
 
-## Nota con el producto (se añade en el primer turno del vendedor).
+## Idea del catálogo (opcional): frase de ejemplo que el jugador puede usar o editar.
 static func offer_note(offer_id: String) -> String:
 	var o := OfferDB.get_o(offer_id)
 	return "lo que vende es: %s (%s); un precio razonable sería unos %d pesos" % [o["name"], o["pitch"], int(o["price"])]
+
+
+static func catalog_pitch(offer_id: String) -> String:
+	var o := OfferDB.get_o(offer_id)
+	return "Le llamo para ofrecerle nuestro %s: %s Cuesta %d pesos." % [String(o["name"]).to_lower(), String(o["pitch"]).trim_suffix("."), int(o["price"])]
 
 
 ## Mensaje de cada turno: notas del juego (memoria verificable) + frase del vendedor.

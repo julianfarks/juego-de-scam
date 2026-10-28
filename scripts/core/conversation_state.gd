@@ -6,7 +6,15 @@ extends RefCounted
 
 var client_id := ""
 var personality_id := ""
-var offer_id := ""
+var offer_id := ""                     # idea del catálogo usada como punto de partida ("" = libre)
+
+# Propuesta LIBRE del jugador (lo que de verdad intenta vender en esta llamada)
+var proposal := ""                     # cómo la resume el cliente (lo dice la IA, saneado)
+var proposal_log: Array = []           # [{turn, text}] cambios de propuesta
+var tags: Array = []                   # categorías detectadas en lo que dice el jugador (reglas)
+var quantity := 1                      # cantidad propuesta (reglas, del texto del jugador)
+var budget := 100                      # presupuesto del cliente (reglas)
+var price_history: Array = []          # [{turn, price}] precios que ha dicho el vendedor
 
 var trust := 30.0
 var patience := 60.0
@@ -49,9 +57,10 @@ var elapsed := 0.0
 var time_limit := 150.0
 
 
-func setup(p_client_id: String, p_offer_id: String, extra_trust := 0.0, extra_patience := 0.0) -> void:
+func setup(p_client_id: String, p_offer_id: String = "", extra_trust := 0.0, extra_patience := 0.0, day := 1) -> void:
 	client_id = p_client_id
 	offer_id = p_offer_id
+	budget = ClientDB.budget(client_id, day)
 	var c := ClientDB.get_c(client_id)
 	personality_id = c["personality"]
 	var base: Dictionary = PersonalityDB.get_p(personality_id)["base"]
@@ -140,4 +149,25 @@ func to_prompt_dict() -> Dictionary:
 		"decisions": decisions.slice(maxi(0, decisions.size() - 4)), "provisional": provisional,
 		"turn": turn, "seconds_left": int(maxf(0.0, time_limit - elapsed)), "summary": summary,
 		"intro_done": intro_done, "offer_explained": offer_explained,
+		"proposal": proposal, "quantity": quantity, "tags": tags,
 	}
+
+
+## Nombre para mostrar de lo que se intenta vender en esta llamada.
+func proposal_label() -> String:
+	if proposal != "":
+		return proposal
+	if offer_id != "":
+		return String(OfferDB.get_o(offer_id)["name"])
+	return "Propuesta sin concretar"
+
+
+## Registra lo que el cliente entiende que se le ofrece (si cambia).
+func set_proposal(text: String) -> bool:
+	var t := Proposal.clean_label(text)
+	if t.length() < 3 or t.to_lower() == proposal.to_lower() or Proposal.is_action_label(t):
+		return false
+	proposal = t
+	proposal_log.append({"turn": turn, "text": t})
+	offer_explained = true
+	return true

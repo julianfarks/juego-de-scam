@@ -21,7 +21,11 @@ const DEFAULTS := {
 	"vad_auto_stop": true,
 	"voice_speed": 1.0,
 	"llm_size": "auto",      # auto | normal | ligero
-	"ai_gpu": true,          # aceleración por GPU del modelo de lenguaje
+	# GPU para el modelo de lenguaje: DESACTIVADA por defecto. En móviles con GPU
+	# Adreno (Snapdragon), NobodyWho descarta Vulkan y usa el backend OpenCL de
+	# llama.cpp, que con Gemma 4 puede no devolver nunca el primer token (el cliente
+	# se quedaba «pensando»). El procesador de un móvil actual es suficiente.
+	"ai_gpu": false,
 	"gpu_probe": false,      # marca interna: si queda a true, la carga con GPU falló
 	"ai_enabled": true,
 	"ai_setup_seen": false,
@@ -30,6 +34,7 @@ const DEFAULTS := {
 	"swap_sides": false,
 	"shift_minutes": 9,
 	"mic_consent": false,
+	"settings_version": 2,
 }
 
 var data: Dictionary = DEFAULTS.duplicate(true)
@@ -95,6 +100,13 @@ func load_settings() -> void:
 	for key in DEFAULTS.keys():
 		if cfg.has_section_key("settings", key):
 			data[key] = _sanitize(key, cfg.get_value("settings", key))
+	# Migración: hasta la versión 1 la GPU venía activada por defecto y bloqueaba la
+	# IA en móviles Adreno. Se desactiva una vez; el jugador puede volver a activarla.
+	if int(cfg.get_value("settings", "settings_version", 1)) < 2:
+		data["ai_gpu"] = false
+		data["gpu_probe"] = false
+		data["settings_version"] = 2
+		save_settings()
 
 
 func save_settings() -> void:

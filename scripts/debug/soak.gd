@@ -91,7 +91,8 @@ func _play_call(office: OfficeController) -> void:
 	if cs == null:
 		return
 	var offers := OfferDB.unlocked_for_day(Game.day)
-	cs._begin_call(offers[randi() % offers.size()])
+	cs.opening_idea = Persona.catalog_pitch(offers[randi() % offers.size()])
+	cs._begin_call()
 	calls_done += 1
 	for i in randi_range(3, 7):
 		if not is_instance_valid(cs) or cs.session == null or not cs.session.active:

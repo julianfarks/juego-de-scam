@@ -116,6 +116,18 @@ static func available_for_day(day: int) -> Array:
 	return out
 
 
+## Presupuesto del cliente para una compra (pesos ficticios). Determinista: depende
+## del personaje (dificultad, profesión) y del día. Si el total pedido lo supera
+## mucho, casi nunca acepta; si es barato para él, acepta con más facilidad.
+const RICH := {"profesor": 1.6, "margarita": 1.4, "competitivo": 1.3}
+static func budget(client_id: String, day := 1) -> int:
+	var c := get_c(client_id)
+	var base := 55.0 + 30.0 * float(c["difficulty"]) + float(absi(hash(client_id)) % 5) * 10.0
+	base *= float(RICH.get(client_id, RICH.get(str(c["personality"]), 1.0)))
+	base *= 1.0 + 0.08 * float(maxi(0, day - 1))
+	return int(round(base / 5.0)) * 5
+
+
 ## Afinidad de un cliente con una oferta (multiplicador para la probabilidad de cierre).
 static func offer_affinity(client_id: String, offer_id: String) -> float:
 	var c := get_c(client_id)

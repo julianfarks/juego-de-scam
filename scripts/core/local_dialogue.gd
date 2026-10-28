@@ -220,7 +220,6 @@ static func _answer_question(st: ConversationState, a: Dictionary, facts: Dictio
 static func _react(st: ConversationState, a: Dictionary, events: Array, rng: RandomNumberGenerator) -> String:
 	var pid := st.personality_id
 	var intents: Dictionary = a["intents"]
-	var o := OfferDB.get_o(st.offer_id)
 	var top: String = a["top"]
 	for e in events:
 		if String(e).begins_with("disliked:"):
@@ -240,13 +239,13 @@ static func _react(st: ConversationState, a: Dictionary, events: Array, rng: Ran
 			return _pick(rng, ["Vale. ¿Y qué quiere de mí su empresa?", "Nunca había oído hablar de ustedes."]) if st.trust < 40 else "Ah, encantado. Siga."
 		"offer_pitch":
 			if st.understanding < 35:
-				return "¿Un %s? No sé ni qué es eso." % String(o["name"]).to_lower()
-			return _pick(rng, ["O sea, un %s. Qué cosa más rara." % String(o["name"]).to_lower(), "Hmm, %s… curioso." % String(o["name"]).to_lower()])
+				return "No sé ni qué es eso que me ofrece. Explíquemelo mejor."
+			return _pick(rng, ["Vaya, qué cosa más rara me ofrece.", "Hmm… curioso. ¿Y para qué sirve?"])
 		"benefit":
 			return PersonalityDB.line(pid, "positive", rng) if st.trust >= 35 else "Eso dicen todos los anuncios."
 		"price":
 			if st.stated_price > 0:
-				if st.stated_price > int(o["price"]) * 2:
+				if st.stated_price * maxi(1, st.quantity) > st.budget:
 					return "¿%d? ¡Eso es carísimo!" % st.stated_price
 				return _pick(rng, ["%d… no sé, no sé." % st.stated_price, "Hmm, %d. Me lo pienso." % st.stated_price])
 			return "¿Pero cuánto exactamente?"

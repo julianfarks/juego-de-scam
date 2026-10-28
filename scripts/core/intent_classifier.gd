@@ -9,7 +9,7 @@ extends RefCounted
 const LEX := {
 	"greeting": ["hola", "buenos dias", "buenas tardes", "buenas noches", "buenas", "que tal", "saludos", "alo", "como esta", "como le va"],
 	"introduce": ["me llamo", "mi nombre es", "soy de", "le llamo de", "le hablo de", "de parte de", "represento", "nuestra empresa", "trabajo en", "trabajo para", "somos una", "somos la", "teletimo", "ofertas milagrosas"],
-	"offer_pitch": ["oferta", "promocion", "producto", "servicio", "plan ", "seguro", "membresia", "suscripcion", "regalo", "ha ganado", "ganador", "le ofrezco", "le traigo", "tenemos", "vendemos", "le propongo", "exclusiv"],
+	"offer_pitch": ["oferta", "promocion", "producto", "servicio", "plan ", "seguro", "membresia", "suscripcion", "regalo", "ha ganado", "ganador", "le ofrezco", "le traigo", "tenemos", "vendemos", "le propongo", "exclusiv", "le vendo", "tengo un", "tengo una", "le interesaria", "le puede interesar", "le va a encantar"],
 	"benefit": ["beneficio", "ventaja", "ahorr", "gratis", "incluye", "le permite", "sirve para", "podra", "proteg", "tranquilidad", "disfrut", "mejorar", "le ayuda", "nunca mas", "le dara", "le va a encantar", "resuelve"],
 	"price": ["precio", "cuesta", "vale ", "pesos", "euros", "dolares", "monedas", "solo paga", "pago", "cuota", "al mes", "mensual", "unicamente", "tarifa", "importe"],
 	"discount": ["descuento", "rebaja", "mitad de precio", "2x1", "dos por uno", "gratis el primer", "sin coste", "sin costo", "oferta especial", "le hago un precio", "precio especial", "por ser usted"],
@@ -20,7 +20,7 @@ const LEX := {
 	"reassure_security": ["es seguro", "seguridad", "confianza", "protegid", "encript", "certificad", "legal", "oficial", "garantizad", "confie", "fiable", "serio"],
 	"guarantee": ["garantia", "devolucion", "devuelvo", "reembolso", "sin riesgo", "si no le gusta", "por escrito", "contrato", "le mando", "le envio", "correo", "factura", "recibo"],
 	"social_proof": ["miles de", "todo el mundo", "sus vecinos", "famos", "recomendad", "numero uno", "otros clientes", "muy popular", "la gente", "millones de", "el mas vendido"],
-	"ask_payment": ["tarjeta", "numero de la tarjeta", "datos de pago", "cvv", "codigo de seguridad", "fecha de caducidad", "vencimiento", "me da sus datos", "me dicta", "pagar ahora", "cobrar", "domicili", "medio de pago", "como quiere pagar", "datos bancarios"],
+	"ask_payment": ["tarjeta", "numero de la tarjeta", "datos de pago", "cvv", "codigo de seguridad", "fecha de caducidad", "vencimiento", "me da sus datos", "me dicta", "pagar ahora", "cobrar", "domiciliar", "domiciliacion", "medio de pago", "como quiere pagar", "datos bancarios"],
 	"pressure": ["tiene que", "debe ", "obligatori", "si no ", "multa", "problema legal", "policia", "demanda", "perdera", "se arrepentira", "no tiene opcion", "o paga", "sancion"],
 	"insult": ["tonto", "idiota", "estupid", "imbecil", "inutil", "callese", "callate", "pesad", "burro", "bobo", "tarado", "vieja loca", "viejo loco"],
 	"apology": ["perdon", "disculp", "lo siento", "perdone", "me equivoque", "error mio"],

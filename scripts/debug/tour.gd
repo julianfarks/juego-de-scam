@@ -57,7 +57,8 @@ func _run() -> void:
 	office._start_call(lead, true)
 	await wait(1.5)
 	await shot("05_elegir_oferta")
-	office.call_screen._begin_call("herencia_patatonia")
+	office.call_screen.opening_idea = Persona.catalog_pitch("herencia_patatonia")
+	office.call_screen._begin_call()
 	await wait(1.5)
 	var cs: CallScreen = office.call_screen
 	for line in ["Hola, buenas tardes, me llamo Julián y le llamo de TeleTimo.", "Imagine: un príncipe de Patatonia le ha dejado una herencia increíble, ¡es su destino!", "Le entiendo, no se preocupe: le doy garantía de devolución por escrito."]:

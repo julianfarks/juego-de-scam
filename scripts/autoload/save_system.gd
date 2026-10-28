@@ -5,11 +5,11 @@ extends Node
 signal saved
 signal loaded
 
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 const PATH := "user://save.json"
 const BACKUP_PATH := "user://save.bak.json"
 const TMP_PATH := "user://save.tmp.json"
-const MAX_LIST := {"crm": 60, "transactions": 80, "emails": 40, "evaluations": 40, "callbacks": 10}
+const MAX_LIST := {"crm": 60, "transactions": 120, "emails": 40, "evaluations": 40, "callbacks": 10, "movements": 300}
 
 var data: Dictionary = {}
 var path_override := ""  # usado por las pruebas
@@ -41,7 +41,8 @@ static func default_data() -> Dictionary:
 		"achievements": [],
 		"crm": [],
 		"callbacks": [],
-		"transactions": [],
+		"transactions": [],     # ventas ficticias: cliente, propuesta, precio, cantidad, importe, comisión…
+		"movements": [],        # movimientos del saldo: comisiones, bonos, multas, gastos, compras
 		"emails": [],
 		"evaluations": [],
 	}
@@ -92,6 +93,18 @@ static func migrate(raw: Dictionary) -> Dictionary:
 		d.erase("cash")
 		d.erase("upgrades")
 		v = 2
+	if v < 3:
+		# v2: las transacciones guardaban el nombre de una oferta del catálogo y el
+		# importe íntegro iba al saldo. v3: propuesta libre, precio, cantidad y comisión.
+		var txs: Array = d.get("transactions", [])
+		for t in txs:
+			if t is Dictionary and not t.has("proposal"):
+				t["proposal"] = t.get("offer", "")
+				t["unit_price"] = int(t.get("amount", 0))
+				t["quantity"] = 1
+				t["commission"] = int(t.get("amount", 0))
+				t["status"] = "completada"
+		v = 3
 	var out := default_data()
 	_merge_into(out, d)
 	out["version"] = SAVE_VERSION

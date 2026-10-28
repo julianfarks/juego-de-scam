@@ -3,6 +3,7 @@ extends Node
 ## (dinero ficticio, estadísticas, objetivos, logros, correo, evaluaciones).
 
 signal money_changed(day_income: int)
+signal balance_changed(balance: int)
 signal clock_changed(minutes_left: float)
 signal notify(text: String, kind: String)
 signal event_started(id: String)
@@ -47,7 +48,8 @@ func start_day(d: int) -> void:
 	on_call = false
 	ledger = {"income": 0, "calls": 0, "successes": 0, "hangups": 0, "results": [], "contradictions": 0,
 		"best_sale": 0, "streak": 0, "max_streak": 0, "incidents": 0, "fines": 0, "bonuses": 0,
-		"objections_resolved": 0, "voice_turns": 0, "missed": 0, "quota": CampaignDB.quota(day)}
+		"objections_resolved": 0, "voice_turns": 0, "missed": 0, "quota": CampaignDB.quota(day),
+		"commissions": 0, "net": 0, "sales_amount": 0}
 	objectives = AchievementDB.make_objectives(day, rng)
 	events_done = []
 	events_budget = int(CampaignDB.day_info(day)["events"])
@@ -201,8 +203,21 @@ func call_flags_for(lead: Dictionary) -> Dictionary:
 
 # ------------------------------------------------------------------ Resultados
 
-## Aplica el resultado de una llamada. El importe ya viene calculado por Economy;
-## aquí solo se registra y se respetan los límites de la oferta.
+## Movimiento del saldo ficticio del jugador (todo pasa por aquí y queda registrado).
+## kind: comision | incentivo | bono | recompensa | multa | gasto | compra
+func post(kind: String, amount: int, label: String) -> void:
+	if amount == 0:
+		return
+	Save.data["money"] = int(Save.data["money"]) + amount
+	Save.push_capped("movements", {"day": day, "kind": kind, "amount": amount, "label": label, "balance": int(Save.data["money"]), "unix": int(Time.get_unix_time_from_system())})
+	if kind != "compra" and not ledger.is_empty():
+		ledger["net"] = int(ledger.get("net", 0)) + amount
+	balance_changed.emit(int(Save.data["money"]))
+
+
+## Aplica el resultado de una llamada. El importe y la comisión vienen de las reglas
+## (Economy); aquí se vuelven a acotar, se registra la transacción ficticia y se
+## actualiza el saldo al momento.
 func apply_call_result(r: Dictionary) -> void:
 	var lead_id: String = r["client_id"]
 	for l in leads:
@@ -215,18 +230,28 @@ func apply_call_result(r: Dictionary) -> void:
 	served[lead_id] = int(served.get(lead_id, 0)) + 1
 	var outcome: String = r["outcome"]
 	var amount := 0
+	var commission := 0
+	var label := String(r.get("offer_name", "Propuesta"))
 	if outcome == "success":
-		var o := OfferDB.get_o(r["offer_id"])
-		var cap := int(o["max"] * 2.0 * 1.4)  # límite absoluto incluso con multiplicadores especiales
+		var cap := int(ClientDB.budget(lead_id, day) * Economy.AMOUNT_CAP_X_BUDGET)  # límite absoluto
 		amount = clampi(int(r["amount"]), 0, cap)
+		commission = clampi(int(r.get("commission", Economy.commission(amount, mods()))), 0, int(amount * Economy.COMMISSION_RATE * 3.0))
 		ledger["successes"] += 1
 		ledger["streak"] += 1
 		ledger["max_streak"] = maxi(ledger["max_streak"], ledger["streak"])
 		ledger["best_sale"] = maxi(ledger["best_sale"], amount)
+		ledger["sales_amount"] = int(ledger.get("sales_amount", 0)) + amount
+		ledger["commissions"] = int(ledger.get("commissions", 0)) + commission
 		Save.stat_add("transactions")
 		Save.stat_add("successes")
 		buffs["next_call_mult"] = 1.0
-		Save.push_capped("transactions", {"day": day, "client": r["client_name"], "offer": o["name"], "amount": amount, "card": r.get("card", {}).get("masked", "")})
+		Save.push_capped("transactions", {
+			"id": "TX-%d-%04d" % [day, randi() % 10000], "day": day, "client": r["client_name"], "client_id": lead_id,
+			"proposal": label, "unit_price": int(r.get("unit_price", amount)), "quantity": int(r.get("quantity", 1)),
+			"amount": amount, "commission": commission, "status": "completada", "outcome": r.get("outcome_text", ""),
+			"card": r.get("card", {}).get("masked", ""), "turns": int(r.get("turns", 0)), "mode": r.get("mode", ""),
+		})
+		post("comision", commission, "Comisión: %s (%s)" % [label, r["client_name"]])
 		if amount >= 400:
 			unlock("big_fish")
 		var p: String = ClientDB.get_c(lead_id)["personality"]
@@ -236,19 +261,22 @@ func apply_call_result(r: Dictionary) -> void:
 			unlock("paranoid_sale")
 	else:
 		ledger["streak"] = 0
-		amount = Economy.consolation(outcome)
+		var consolation := Economy.consolation(outcome)
+		if consolation > 0:
+			post("incentivo", consolation, "Incentivo: %s quedó %s" % [r["client_name"], "interesado" if outcome == "interested" else "pendiente de rellamada"])
 		if outcome in ["hangup", "contradiction"]:
 			ledger["hangups"] += 1
 			Save.stat_add("hangups")
 		else:
 			Save.stat_add("failures")
 		if outcome == "callback":
-			Save.push_capped("callbacks", {"client_id": lead_id, "offer_id": r["offer_id"], "trust_bonus": 12, "day": day})
+			Save.push_capped("callbacks", {"client_id": lead_id, "offer_id": r.get("offer_id", ""), "trust_bonus": 12, "day": day})
 	ledger["income"] += amount
 	ledger["contradictions"] += int(r.get("contradictions", 0))
 	ledger["objections_resolved"] += int(r.get("objections_resolved", 0))
 	ledger["voice_turns"] += int(r.get("voice_turns", 0))
 	r["final_amount"] = amount
+	r["final_commission"] = commission
 	ledger["results"].append(r)
 	buffs["pizza"] = 0.0
 	buffs["weird_question"] = false
@@ -259,7 +287,7 @@ func apply_call_result(r: Dictionary) -> void:
 		Save.data["stats"]["longest_call_s"] = int(r["duration"])
 	if int(r.get("duration", 0)) >= 120:
 		unlock("long_talk")
-	Save.push_capped("crm", {"client_id": lead_id, "name": r["client_name"], "outcome": outcome, "day": day, "offer": OfferDB.get_o(r["offer_id"])["name"], "note": r.get("comment", "")})
+	Save.push_capped("crm", {"client_id": lead_id, "name": r["client_name"], "outcome": outcome, "day": day, "offer": label, "note": r.get("comment", "")})
 	_update_objectives(r)
 	_check_achievements()
 	money_changed.emit(ledger["income"])
@@ -274,11 +302,13 @@ func apply_call_result(r: Dictionary) -> void:
 
 func add_fine(amount: int, why: String) -> void:
 	ledger["fines"] += amount
+	post("multa", -amount, why)
 	notify.emit("%s (-%d)" % [why, amount], "bad")
 
 
 func add_bonus(amount: int, why: String) -> void:
 	ledger["bonuses"] += amount
+	post("bono", amount, why)
 	notify.emit("%s (+%d)" % [why, amount], "good")
 
 
@@ -370,7 +400,16 @@ func end_day(boss_comment := "") -> Dictionary:
 	var passed := income >= q
 	var grade := BossLines.grade_for(income, q, ledger["hangups"], ledger["calls"])
 	var day_bonus := int(q * 0.25) if passed else 0
-	var net := income + rewards + day_bonus + int(ledger["bonuses"]) - expenses - int(ledger["fines"])
+	# Al cerrar la jornada se cobran recompensas y bono de cuota y se pagan los gastos
+	# (las comisiones, bonos y multas ya se aplicaron al saldo en su momento).
+	for o in objectives:
+		if o["done"]:
+			post("recompensa", int(o["reward"]), "Objetivo: %s" % o.get("text", o.get("type", "")))
+	if day_bonus > 0:
+		post("bono", day_bonus, "Bono por cumplir la cuota del día %d" % day)
+	for e in exp_list:
+		post("gasto", -int(e["amount"]), String(e["label"]))
+	var net := int(ledger.get("net", 0))
 	var stats_for_boss := {"income": income, "quota": q, "grade": grade, "calls": ledger["calls"], "successes": ledger["successes"],
 		"hangups": ledger["hangups"], "contradictions": ledger["contradictions"], "best_sale": ledger["best_sale"],
 		"incidents": ledger["incidents"], "missed": ledger["missed"], "day": day, "passed": passed}
@@ -401,7 +440,6 @@ func end_day(boss_comment := "") -> Dictionary:
 	var prev_grade := str(camp["day_grades"].get(str(day), ""))
 	if prev_grade == "" or "SABCDF".find(grade) < "SABCDF".find(prev_grade):
 		camp["day_grades"][str(day)] = grade
-	Save.data["money"] = int(Save.data["money"]) + net
 	Save.data["career_earnings"] = int(Save.data["career_earnings"]) + maxi(0, income)
 	Save.stat_add("money_total", maxi(0, income))
 	if income > int(Save.data["stats"]["record_day_income"]):
@@ -416,6 +454,7 @@ func end_day(boss_comment := "") -> Dictionary:
 	var report := {"day": day, "income": income, "quota": q, "passed": passed, "grade": grade, "comment": comment,
 		"expenses": exp_list, "expenses_total": expenses, "rewards": rewards, "objectives": objectives.duplicate(true),
 		"day_bonus": day_bonus, "fines": ledger["fines"], "bonuses": ledger["bonuses"], "net": net, "fired": fired,
+		"commissions": int(ledger.get("commissions", 0)),
 		"calls": ledger["calls"], "successes": ledger["successes"], "hangups": ledger["hangups"],
 		"strikes": camp["strikes"], "money": Save.data["money"], "stats_for_boss": stats_for_boss}
 	day_ended.emit(report)
@@ -437,7 +476,7 @@ func buy_upgrade(id: String) -> Dictionary:
 	var chk := UpgradeDB.can_buy(id, Save.data["upgrades_owned"], int(Save.data["money"]), int(Save.data["campaign"]["max_day_unlocked"]))
 	if not chk["ok"]:
 		return chk
-	Save.data["money"] = int(Save.data["money"]) - int(UpgradeDB.UPGRADES[id]["cost"])
+	post("compra", -int(UpgradeDB.UPGRADES[id]["cost"]), "Mejora: %s" % UpgradeDB.UPGRADES[id]["name"])
 	Save.data["upgrades_owned"].append(id)
 	Save.save_game()
 	return {"ok": true, "why": ""}
@@ -452,7 +491,7 @@ func buy_cosmetic(id: String) -> Dictionary:
 	var cost := int(UpgradeDB.COSMETICS[id]["cost"])
 	if int(Save.data["money"]) < cost:
 		return {"ok": false, "why": "Dinero insuficiente"}
-	Save.data["money"] = int(Save.data["money"]) - cost
+	post("compra", -cost, "Ropa: %s" % UpgradeDB.COSMETICS[id].get("name", id))
 	owned.append(id)
 	Save.save_game()
 	return {"ok": true, "why": ""}

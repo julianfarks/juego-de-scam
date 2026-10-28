@@ -43,6 +43,11 @@ func _run_all() -> void:
 	test_save_migration()
 	test_local_dialogue_all_personalities()
 	await test_call_session_offline()
+	test_free_proposals()
+	test_economy_free_prices()
+	test_transactions_and_balance()
+	await test_timeouts_never_hang()
+	await test_ai_call_with_fake_engine()
 	test_game_state_day_cycle()
 	test_upgrades()
 	test_wav()
@@ -210,8 +215,10 @@ func test_economy_bounds() -> void:
 	st.suspicion = 0
 	st.offer_explained = true
 	var huge_mods := {"amount_mult": 50.0, "next_call_mult": 50.0, "close_bonus": 5.0}
-	var amt := Economy.compute_amount(st, 99, huge_mods)
-	check(amt <= int(OfferDB.get_o("colchon_nube")["max"]), "el importe nunca supera el máximo de la oferta")
+	st.stated_price = 999999
+	st.quantity = 99
+	var amt := Economy.compute_amount(st)
+	check(amt <= int(st.budget * Economy.AMOUNT_CAP_X_BUDGET), "el importe nunca supera el tope según el presupuesto (%d)" % amt)
 	var p := Economy.close_probability(st, huge_mods, 1.0)
 	check(p <= Economy.MAX_P, "probabilidad de cierre acotada")
 	var st2 := _new_state("oscar")
@@ -225,11 +232,13 @@ func test_economy_bounds() -> void:
 		s.understanding = 70
 		s.suspicion = 10
 		s.offer_explained = true
+		s.stated_price = 30
 		if Economy.attempt_close(s, _rng(i), 1)["success"]:
 			wins += 1
 	check(wins > 80 and wins < 200, "un cliente receptivo suele aceptar, pero no siempre (%d/200)" % wins)
 	var s3 := _new_state("pilar")
 	s3.offer_explained = true
+	s3.stated_price = 30
 	var before := s3.suspicion
 	var fails := 0
 	for i in 30:
@@ -264,7 +273,7 @@ func test_ai_cannot_alter_money() -> void:
 	var r := {"client_id": "pilar", "client_name": "Pilar", "offer_id": "seguro_abduccion", "outcome": "success", "amount": 999999, "duration": 30}
 	get_tree().root.get_node("Game").apply_call_result(r)
 	var after: int = get_tree().root.get_node("Game").ledger["income"]
-	var cap := int(OfferDB.get_o("seguro_abduccion")["max"] * 2.0 * 1.4)
+	var cap := int(ClientDB.budget("pilar", 1) * Economy.AMOUNT_CAP_X_BUDGET)
 	check(after - before <= cap, "GameState recorta importes imposibles (%d ≤ %d)" % [after - before, cap])
 
 
@@ -300,7 +309,12 @@ func test_save_migration() -> void:
 	section("Guardado versionado")
 	var v1 := {"version": 1, "cash": 777, "upgrades": ["crm"], "campaign": {"current_day": 3, "max_day_unlocked": 4}, "stats": {"calls_made": 12.0}, "basura": true}
 	var m: Dictionary = get_tree().root.get_node("Save").migrate(v1)
-	check(int(m["version"]) == 2, "migra a v2")
+	check(int(m["version"]) == 3, "migra a la versión actual (v3)")
+	var v2 := {"version": 2, "money": 500, "transactions": [{"day": 1, "client": "Pilar", "offer": "Club VIP", "amount": 40, "card": "0000"}]}
+	var m2: Dictionary = get_tree().root.get_node("Save").migrate(v2)
+	var t0: Dictionary = m2["transactions"][0]
+	check(t0["proposal"] == "Club VIP" and int(t0["quantity"]) == 1 and int(t0["commission"]) == 40 and t0["status"] == "completada", "v2→v3: las transacciones antiguas se conservan con el nuevo formato")
+	check(m2["movements"] is Array, "v2→v3: añade el registro de movimientos")
 	check(int(m["money"]) == 777, "conserva el dinero (cash → money)")
 	check(m["upgrades_owned"] == ["crm"], "conserva mejoras")
 	check(int(m["campaign"]["max_day_unlocked"]) == 4, "conserva campaña")
@@ -353,18 +367,18 @@ func test_call_session_offline() -> void:
 	var result := {}
 	s.client_spoke.connect(func(t, _e, _g, src): spoken.append([t, src]))
 	s.ended.connect(func(r): result.merge(r))
-	s.start("pilar", "garantia_tostadora", 1, UpgradeDB.aggregate_mods([]), {"force_basic": true}, 1234)
+	s.start("pilar", 1, UpgradeDB.aggregate_mods([]), {"force_basic": true}, 1234)
 	check(spoken.size() == 1, "el cliente saluda al empezar")
 	s.player_says("Hola, buenas tardes, me llamo Julián y le llamo de TeleTimo")
 	s.player_says("Le ofrezco una garantía para su tostadora, es como un seguro: si se rompe, se la cambiamos gratis")
 	s.player_says("Entiendo que lo tenga que pensar, pero le doy garantía de devolución por escrito")
 	s.player_says("Cuesta solo 29 euros y además hoy le hago un descuento")
 	check(spoken.size() >= 5, "responde a cada turno")
-	check(spoken.all(func(x): return x[1] in ["basico", "reglas"]), "sin IA cargada todo es diálogo básico (y así se etiqueta)")
+	check(spoken.all(func(x): return x[1] == "basico"), "sin IA cargada todo es diálogo básico (y así se etiqueta)")
 	s.player_says("Perfecto, ¿me dicta el número de su tarjeta?")
 	check(result.size() > 0 or s.active, "el intento de cierre se resuelve")
 	if not result.is_empty() and result["outcome"] == "success":
-		check(int(result["amount"]) <= int(OfferDB.get_o("garantia_tostadora")["max"]), "importe dentro de límites")
+		check(int(result["amount"]) == 29 * maxi(1, int(result["quantity"])), "importe = precio dicho × cantidad")
 		check(FakeCard.is_clearly_fake(result["card"]), "la tarjeta de la venta es ficticia")
 	if s.active:
 		s.player_hangs_up()
@@ -375,7 +389,7 @@ func test_call_session_offline() -> void:
 	get_tree().root.add_child(s2)
 	var res2 := {}
 	s2.ended.connect(func(r): res2.merge(r))
-	s2.start("brayan", "seguro_abduccion", 1, {}, {"force_basic": true}, 9)
+	s2.start("brayan", 1, {}, {"force_basic": true}, 9)
 	for i in 400:
 		s2.tick(0.5)
 	check(not res2.is_empty(), "la llamada termina por tiempo o paciencia")
@@ -394,8 +408,8 @@ func test_game_state_day_cycle() -> void:
 	check(game.leads.size() >= 5, "genera clientes para llamar")
 	check(game.objectives.size() == 2, "genera objetivos secundarios")
 	var q: int = game.quota()
-	game.apply_call_result({"client_id": "pilar", "client_name": "Pilar", "offer_id": "colchon_nube", "outcome": "success", "amount": q + 50, "duration": 60})
 	var money_before: int = save.data["money"]
+	game.apply_call_result({"client_id": "profesor", "client_name": "Profesor", "offer_name": "Colchón de nube", "outcome": "success", "amount": q + 50, "unit_price": q + 50, "quantity": 1, "duration": 60})
 	var rep: Dictionary = game.end_day()
 	check(rep["passed"], "supera la cuota")
 	check(int(save.data["campaign"]["max_day_unlocked"]) == 2, "desbloquea el día 2")
@@ -452,3 +466,276 @@ func test_events_objectives() -> void:
 	check(EventDB.pick(1, r, ["urgent_call", "boss_inspection", "interruption"]) == "", "respeta el día mínimo de cada evento")
 	var objs := AchievementDB.make_objectives(3, r)
 	check(objs.size() == 2 and objs[0]["type"] != objs[1]["type"], "dos objetivos distintos")
+
+
+# ------------------------------------------------------------------ Propuestas libres
+
+func test_free_proposals() -> void:
+	section("Propuestas libres (reglas)")
+	var t := Proposal.tags_for("Buenas, tengo un queso artesanal y además se lo llevamos a domicilio")
+	check(t.has("comida") and t.has("servicios"), "detecta categorías de una propuesta inventada (%s)" % str(t))
+	check(Proposal.tags_for("le vendo hierbas medicinales para dormir").has("salud"), "hierbas medicinales → salud")
+	check(Proposal.tags_for("un servicio de jardinería para su casa").has("servicios"), "jardinería → servicios")
+	check(Proposal.quantity_from("le dejo dos cajas por 20 pesos cada una") == 2, "cantidad en letra («dos cajas»)")
+	check(Proposal.quantity_from("son 3 kilos a 15 pesos") == 3, "cantidad en cifra («3 kilos»)")
+	check(Proposal.quantity_from("media docena de frascos") == 6, "«media docena» = 6")
+	check(Proposal.quantity_from("cuesta 30 pesos") == 0, "sin cantidad explícita → 0")
+	check(Proposal.quantity_from("99 cajas") == Proposal.MAX_QUANTITY, "cantidad acotada")
+	check(Proposal.price_from("si se lleva dos piezas se las dejo en 18 pesos cada una") == 18, "precio: el número pegado a la moneda, no la cantidad")
+	check(Proposal.price_from("Cuesta veinte pesos la pieza") == 20, "precio en letra")
+	check(Proposal.price_from("son 3 kilos a 15") == 15, "sin moneda: descarta la cantidad")
+	check(Proposal.price_from("solo $25 al mes") == 25, "precio con símbolo $")
+	check(Proposal.price_from("le dejo tres botes por 12 pesos cada uno") == 12, "tres botes por 12 pesos → 12")
+	check(Proposal.price_from("no tiene precio") == 0, "sin número → sin precio")
+	check(Proposal.is_action_label("Confirmar el pago") and not Proposal.is_action_label("Queso artesanal"), "detecta etiquetas de acción")
+	# Memoria de la propuesta y cambio de propuesta sin reiniciar
+	var st := _new_state("pilar")
+	check(st.set_proposal("queso artesanal de cabra"), "registra la propuesta")
+	check(not st.set_proposal("Queso artesanal de cabra"), "no duplica si no cambia")
+	check(st.set_proposal("queso artesanal con entrega a domicilio") and st.proposal_log.size() == 2, "cambia la propuesta y guarda el historial")
+	check(st.proposal_label().begins_with("Queso"), "etiqueta legible de la propuesta")
+	check(not st.set_proposal("Confirmar la compra de los dos quesos") and st.proposal.begins_with("Queso"), "una acción no sustituye a la propuesta")
+	# Negociar a la baja no es contradicción; subir el precio sí
+	var rng := _rng(3)
+	var a1 := IntentClassifier.analyze("Cuesta 50 pesos")
+	ConversationRules.apply_turn(st, a1, rng, {})
+	var a2 := IntentClassifier.analyze("Bueno, para usted lo dejo en 40 pesos")
+	var r2 := ConversationRules.apply_turn(st, a2, rng, {})
+	check(st.stated_price == 40 and st.contradictions.is_empty() and r2["events"].has("price_lowered"), "bajar el precio es negociar")
+	var a3 := IntentClassifier.analyze("En realidad cuesta 70 pesos")
+	ConversationRules.apply_turn(st, a3, rng, {})
+	check(st.contradictions.size() == 1 and st.stated_price == 70, "subir el precio cuenta como contradicción")
+	check(st.price_history.size() == 3, "historial de precios")
+
+
+func test_economy_free_prices() -> void:
+	section("Economía con precios libres")
+	var st := _new_state("pilar")
+	st.trust = 80
+	st.understanding = 70
+	st.suspicion = 5
+	check(Economy.missing_for_close(st) == "propuesta", "sin propuesta no se puede cobrar")
+	st.set_proposal("queso artesanal")
+	check(Economy.missing_for_close(st) == "precio", "sin precio no se puede cobrar")
+	var res := Economy.attempt_close(st, _rng(1), 1)
+	check(not res["success"] and res["missing"] == "precio" and st.close_attempts == 0, "pedir el pago sin precio: el cliente pregunta el precio (no cuenta como intento)")
+	st.stated_price = 20
+	var p_cheap := Economy.close_probability(st)
+	st.stated_price = st.budget * 3
+	var p_exp := Economy.close_probability(st)
+	check(p_cheap > p_exp + 0.3, "un precio muy por encima del presupuesto casi nunca se acepta (%.2f vs %.2f)" % [p_cheap, p_exp])
+	st.stated_price = 15
+	st.quantity = 3
+	check(Economy.compute_amount(st) == 45, "importe = precio × cantidad")
+	check(Economy.commission(100, {}) == int(100 * Economy.COMMISSION_RATE), "comisión base")
+	check(Economy.commission(100, {"amount_mult": 1.15}) > Economy.commission(100, {}), "las mejoras suben la comisión")
+	check(ClientDB.budget("profesor", 1) > ClientDB.budget("tomasito", 1), "clientes con presupuestos distintos")
+	check(ClientDB.budget("pilar", 5) > ClientDB.budget("pilar", 1), "el presupuesto crece con los días")
+	check(Proposal.affinity("remedios", ["seguro"]) > Proposal.affinity("remedios", ["tecnologia"]), "a cada cliente le gustan cosas distintas")
+
+
+func test_transactions_and_balance() -> void:
+	section("Transacciones ficticias y saldo")
+	var save := get_tree().root.get_node("Save")
+	var game := get_tree().root.get_node("Game")
+	save.path_override = "user://test_save.json"
+	save.data = save.default_data()
+	game.start_day(1)
+	var bal0: int = save.data["money"]
+	game.apply_call_result({"client_id": "pilar", "client_name": "Pilar Quizás", "offer_name": "Queso artesanal con entrega", "outcome": "success", "outcome_text": "Transacción ficticia completada",
+		"amount": 60, "unit_price": 20, "quantity": 3, "commission": 30, "card": {"masked": "0000 •••• •••• 1234"}, "duration": 90, "turns": 8})
+	var tx: Dictionary = save.data["transactions"][-1]
+	check(tx["proposal"] == "Queso artesanal con entrega" and int(tx["unit_price"]) == 20 and int(tx["quantity"]) == 3 and int(tx["amount"]) == 60, "registra propuesta, precio, cantidad e importe")
+	check(int(tx["commission"]) == 30 and tx["status"] == "completada" and int(tx["day"]) == 1, "registra comisión, estado y jornada")
+	check(int(save.data["money"]) == bal0 + 30, "el saldo sube al momento con la comisión")
+	check(save.data["movements"][-1]["kind"] == "comision" and int(save.data["movements"][-1]["amount"]) == 30, "queda un movimiento de comisión")
+	check(int(game.ledger["income"]) == 60, "la venta cuenta para la cuota")
+	game.add_fine(15, "Multa de prueba")
+	game.add_bonus(10, "Bono de prueba")
+	check(int(save.data["money"]) == bal0 + 25, "multas y bonos se aplican al saldo")
+	game.apply_call_result({"client_id": "brayan", "client_name": "Brayan", "offer_name": "Wifi para plantas", "outcome": "rejected", "amount": 0, "duration": 40})
+	check(save.data["transactions"].size() == 1, "una llamada sin venta no crea transacción")
+	var before_end: int = save.data["money"]
+	var rep: Dictionary = game.end_day()
+	var gastos := 0
+	for e in rep["expenses"]:
+		gastos += int(e["amount"])
+	check(gastos > 0 and save.data["movements"].filter(func(m): return m["kind"] == "gasto").size() == rep["expenses"].size(), "los gastos del día se registran como movimientos")
+	check(int(save.data["money"]) == before_end + int(rep["rewards"]) + int(rep["day_bonus"]) - gastos, "al cerrar la jornada: recompensas y bono menos gastos")
+	check(int(rep["net"]) == int(save.data["money"]) - bal0, "el neto del día cuadra con el saldo")
+	save.save_game()
+	var n_mov: int = save.data["movements"].size()
+	save.data = {}
+	save.load_game()
+	check(save.data["movements"].size() == n_mov and save.data["transactions"].size() == 1, "el guardado conserva transacciones y movimientos")
+
+
+# ------------------------------------------------------------------ Tiempos límite reales
+
+class FakeStream:
+	extends RefCounted
+	signal never
+	var tokens: Array = []
+	var hang_after := -1      # -1 = no se cuelga; 0 = no da ni el primer token
+	var i := 0
+	func next_token():
+		if hang_after >= 0 and i >= hang_after:
+			await never
+		await Engine.get_main_loop().process_frame
+		if i >= tokens.size():
+			return null
+		i += 1
+		return tokens[i - 1]
+
+
+class FakeChat:
+	extends RefCounted
+	var replies: Array = []        # textos JSON por orden
+	var hang := -2                 # índice de la petición que se cuelga (-2 = ninguna)
+	var calls := 0
+	var stopped := 0
+	var history: Array = []
+	var served := 0
+	func _stream_for(_m) -> FakeStream:
+		var s := FakeStream.new()
+		if calls == hang:
+			s.hang_after = 0
+			calls += 1
+			return s
+		var text: String = replies[mini(served, replies.size() - 1)] if not replies.is_empty() else ""
+		for ch in text:
+			s.tokens.append(ch)
+		calls += 1
+		served += 1
+		return s
+	func ask(msg):
+		history.append(msg)
+		return _stream_for(msg)
+	func complete(msgs, _cfg):
+		history.append(msgs)
+		return _stream_for(msgs)
+	func stop_generation():
+		stopped += 1
+
+
+func _reply(dice: String, propuesta := "", interes := 5, emo := "neutral") -> String:
+	return JSON.stringify({"respuesta": dice, "emocion": emo, "efecto": "igual", "interes": interes, "duda": "", "propuesta": propuesta, "cuelga": false})
+
+
+func test_timeouts_never_hang() -> void:
+	section("Tiempos límite reales (la IA no puede dejar el juego «pensando»)")
+	var t0 := Time.get_ticks_msec()
+	var never := FakeStream.new()
+	never.hang_after = 0
+	var r := await Timed.run(func(): return await never.next_token(), 300)
+	check(r["timeout"] and Time.get_ticks_msec() - t0 < 2000, "una operación que nunca termina se corta al llegar al límite")
+	var ok := await Timed.run(func(): return 42, 1000)
+	check(ok["ok"] and ok["value"] == 42, "una operación normal devuelve su valor")
+	var chat := FakeChat.new()
+	var s1 := FakeStream.new()
+	s1.hang_after = 0
+	var a := await AIStream.read(chat, s1, Callable(), {}, {"first": 300, "stall": 300, "total": 2000})
+	check(not a["ok"] and a["error"] == "sin_primer_token" and chat.stopped == 1, "sin primer token → error explícito y se detiene la generación")
+	var s2 := FakeStream.new()
+	s2.tokens = ["{", "\"r", "e"]
+	s2.hang_after = 2
+	var b := await AIStream.read(chat, s2, Callable(), {}, {"first": 300, "stall": 300, "total": 2000})
+	check(not b["ok"] and b["error"] == "atasco" and b["tokens"] == 2, "atasco a mitad de respuesta → error explícito")
+	var s3 := FakeStream.new()
+	for ch in _reply("Hola"):
+		s3.tokens.append(ch)
+	var c := await AIStream.read(chat, s3)
+	check(c["ok"] and JSON.parse_string(c["text"]) is Dictionary and c["first_ms"] >= 0, "respuesta normal completa con tiempo del primer token")
+	var s4 := FakeStream.new()
+	s4.hang_after = 0
+	var cancel := {"cancel": false}
+	var t1 := Time.get_ticks_msec()
+	var box := {"d": null}
+	var runner := func(): box["d"] = await AIStream.read(chat, s4, Callable(), cancel, {"first": 10000})
+	runner.call()
+	await get_tree().process_frame
+	cancel["cancel"] = true
+	while box["d"] == null and Time.get_ticks_msec() - t1 < 5000:
+		await get_tree().process_frame
+	var d: Dictionary = box["d"] if box["d"] != null else {"error": ""}
+	check(d["error"] == "cancelado" and Time.get_ticks_msec() - t1 < 2000, "Cancelar corta la espera al momento")
+
+
+func test_ai_call_with_fake_engine() -> void:
+	section("Llamada con IA: fases, error, reintento y propuesta libre")
+	# 1) El motor se cuelga en el saludo → error explícito, sin respuesta inventada
+	var s := CallSession.new()
+	get_tree().root.add_child(s)
+	var fake := FakeChat.new()
+	fake.replies = [_reply("¿Diga? ¿Quién es?"), _reply("¿Queso? ¿Y qué tiene de especial?", "queso artesanal", 4),
+		_reply("Ah, con entrega a casa. ¿Y cuánto cuesta?", "queso artesanal con entrega a domicilio", 5),
+		_reply("Veinte pesos... vale, me lo quedo.", "queso artesanal con entrega a domicilio, 20 pesos", 8, "contento")]
+	fake.hang = 0
+	s.chat_factory = func(_p): return fake
+	var phases := []
+	var errs := []
+	var spoken := []
+	var result := {}
+	s.phase_changed.connect(func(p): phases.append(p))
+	s.ai_error.connect(func(m, c): errs.append([m, c]))
+	s.client_spoke.connect(func(t, _e, _g, src): spoken.append([t, src]))
+	s.ended.connect(func(r): result.merge(r))
+	# límite corto para la prueba (flag first_token_ms)
+	s.start("chucho", 1, {}, {"day": 1, "first_token_ms": 300}, 7)
+	var t0 := Time.get_ticks_msec()
+	while s.phase != "error" and Time.get_ticks_msec() - t0 < 90000:
+		await get_tree().process_frame
+	check(s.phase == "error" and errs.size() == 1, "si la IA no responde, la llamada pasa a «error» (no se queda pensando)")
+	check(spoken.is_empty(), "no se inventa ninguna respuesta del cliente")
+	check(phases.has("preparando") and phases.has("pensando"), "fases visibles: preparando → pensando → error")
+	# 2) Reintentar: conversación nueva y responde
+	await s.retry()
+	check(s.phase == "listo" and spoken.size() == 1 and spoken[0][1] == "ia", "Reintentar recupera la llamada sin reiniciar el juego")
+	# 3) Propuesta libre que cambia a mitad de llamada
+	await s.player_says("Buenas, tengo un queso artesanal que le va a encantar")
+	check(s.st.proposal.to_lower().contains("queso"), "el cliente entiende una propuesta inventada")
+	await s.player_says("Y además se lo llevamos a domicilio sin coste")
+	check(s.st.proposal.to_lower().contains("entrega") and s.st.proposal_log.size() == 2, "la propuesta cambia sin reiniciar la conversación")
+	check(s.st.tags.has("comida") and s.st.tags.has("servicios"), "las reglas detectan qué se vende (%s)" % str(s.st.tags))
+	await s.player_says("Cuesta 20 pesos")
+	check(s.st.stated_price == 20, "el precio lo extraen las reglas de la frase del jugador")
+	check(fake.history.size() >= 4, "cada turno se envía a la IA")
+	var last_msg := str(fake.history[-1])
+	check(last_msg.contains("cuesta 20"), "la memoria del juego (precio) se pasa a la IA en las notas")
+	# 4) Cierre: lo deciden las reglas
+	s.st.trust = 95.0
+	s.st.understanding = 90.0
+	s.st.suspicion = 0.0
+	s.st.pending_objections.clear()
+	var tries := 0
+	while s.active and tries < 6:
+		await s.attempt_close()
+		tries += 1
+	if not result.is_empty() and result["outcome"] == "success":
+		check(int(result["amount"]) == 20 and int(result["unit_price"]) == 20 and String(result["offer_name"]).to_lower().contains("queso"), "la venta registra la propuesta y el precio dicho")
+		check(int(result["commission"]) == int(20 * Economy.COMMISSION_RATE), "comisión calculada por reglas")
+	else:
+		check(not result.is_empty() or s.active, "el cierre se resuelve por reglas")
+	if s.active:
+		s.player_hangs_up()
+	check(not result.is_empty() and s.phase == "terminada", "la llamada termina con resultado y fase «terminada»")
+	s.queue_free()
+	# 5) Error en mitad de la llamada → seguir sin IA (elección del jugador, etiquetada)
+	var s2 := CallSession.new()
+	get_tree().root.add_child(s2)
+	var fake2 := FakeChat.new()
+	fake2.replies = [_reply("¿Sí? Dígame.")]
+	fake2.hang = 1
+	s2.chat_factory = func(_p): return fake2
+	var spoken2 := []
+	s2.client_spoke.connect(func(t, _e, _g, src): spoken2.append(src))
+	s2.start("pilar", 1, {}, {"day": 1, "first_token_ms": 300}, 8)
+	while s2.phase != "listo" and s2.phase != "error":
+		await get_tree().process_frame
+	await s2.player_says("Le llamo para ofrecerle unas hierbas medicinales")
+	check(s2.phase == "error", "fallo en un turno → error recuperable")
+	s2.continue_basic()
+	check(s2.mode == "basico" and spoken2[-1] == "basico" and s2.phase == "listo", "«Seguir sin IA» responde con el diálogo básico, etiquetado")
+	s2.player_hangs_up()
+	s2.queue_free()
+	await get_tree().process_frame

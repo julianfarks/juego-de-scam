@@ -72,7 +72,8 @@ func _show(rep: Dictionary, from_ai: bool) -> void:
 	_typing = "«%s»" % rep["comment"]
 	_typed = 0.0
 	boss_reaction.emit(rep["grade"], rep["comment"])
-	box.add_child(UIKit.label("Ingresos ficticios: +%s" % UIKit.money(rep["income"]), 20))
+	box.add_child(UIKit.label("Ventas del día (cuentan para la cuota): %s" % UIKit.money(rep["income"]), 20))
+	box.add_child(UIKit.label("Tus comisiones (ya sumadas al saldo): +%s" % UIKit.money(int(rep.get("commissions", 0))), 20, UIKit.C_GOOD))
 	for o in rep["objectives"]:
 		box.add_child(UIKit.label(("Objetivo cumplido: +%s · %s" % [UIKit.money(int(o["reward"])), o["text"]]) if o["done"] else ("Objetivo fallido: %s" % o["text"]), 19, UIKit.C_GOOD if o["done"] else UIKit.C_MUTED))
 	if rep["day_bonus"] > 0:
@@ -83,7 +84,7 @@ func _show(rep: Dictionary, from_ai: bool) -> void:
 		box.add_child(UIKit.label("%s: -%s" % [e["label"], UIKit.money(int(e["amount"]))], 19, Color("f1948a")))
 	if int(rep["fines"]) > 0:
 		box.add_child(UIKit.label("Multas: -%s" % UIKit.money(rep["fines"]), 19, Color("f1948a")))
-	box.add_child(UIKit.label("Neto del día: %s   ·   Saldo: %s" % [UIKit.money(rep["net"]), UIKit.money(rep["money"])], 24, UIKit.C_ACCENT))
+	box.add_child(UIKit.label("Neto del día (comisiones + bonos + recompensas − gastos − multas): %s   ·   Saldo: %s" % [UIKit.money(rep["net"]), UIKit.money(rep["money"])], 22, UIKit.C_ACCENT))
 	if rep["fired"]:
 		box.add_child(UIKit.label("¡TERCER AVISO! El jefe te despide… y te vuelve a contratar al minuto porque nadie más quiere el puesto. Repite la jornada.", 21, UIKit.C_BAD))
 	elif not rep["passed"]:

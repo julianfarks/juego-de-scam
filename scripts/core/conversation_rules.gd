@@ -117,6 +117,7 @@ static func apply_turn(st: ConversationState, a: Dictionary, rng: RandomNumberGe
 
 	# Memoria de cifras y contradicciones
 	_track_amounts(st, a, d, events)
+	_track_proposal(st, a, events)
 	# Promesas
 	_track_promises(st, a, d, events)
 	# Objeciones: resolución y aparición
@@ -223,24 +224,54 @@ static func _track_amounts(st: ConversationState, a: Dictionary, d: Dictionary, 
 		st.amounts.append({"value": n, "turn": st.turn, "kind": "precio" if price_ctx else "cifra"})
 	if not price_ctx:
 		return
-	var price: int = nums[0]
+	# El precio es el número pegado a la moneda, no el de la cantidad («dos piezas»)
+	var price := Proposal.price_from(String(a["text"]))
+	if price <= 0:
+		return
 	if st.stated_price < 0:
 		st.stated_price = price
+		st.price_history.append({"turn": st.turn, "price": price})
+		events.append("price_set")
 		return
 	if price == st.stated_price:
 		return
-	var is_discount := intents.has("discount") and price < st.stated_price
-	if is_discount:
+	st.price_history.append({"turn": st.turn, "price": price})
+	# Bajar el precio es negociar (legítimo). SUBIRLO sin más es una contradicción.
+	if price < st.stated_price:
 		st.stated_price = price
 		events.append("price_lowered")
 		return
-	# Cambiar el precio sin justificarlo es una contradicción
 	var detector := PersonalityDB.has_quirk(st.personality_id, "detects_contradictions")
 	st.contradictions.append({"a": st.stated_price, "b": price, "turn": st.turn})
 	d["suspicion"] += 16.0 if detector else 9.0
 	d["trust"] -= 8.0 if detector else 4.0
 	events.append("contradiction")
 	st.stated_price = price
+
+
+## Registra solo los hechos (precio, cantidad, qué vende) de una frase que no pasa
+## por apply_turn (p. ej. la frase con la que el jugador pide el pago).
+static func track_facts(st: ConversationState, a: Dictionary) -> Array:
+	var events: Array = []
+	var d := {"trust": 0.0, "patience": 0.0, "humor": 0.0, "understanding": 0.0, "suspicion": 0.0}
+	_track_amounts(st, a, d, events)
+	_track_proposal(st, a, events)
+	st.trust = clampf(st.trust + d["trust"], 0, 100)
+	st.suspicion = clampf(st.suspicion + d["suspicion"], 0, 100)
+	return events
+
+
+## Categorías y cantidad de lo que el jugador ofrece (reglas, no IA).
+static func _track_proposal(st: ConversationState, a: Dictionary, events: Array) -> void:
+	var text := String(a["text"])
+	for tag in Proposal.tags_for(text):
+		if not st.tags.has(tag):
+			st.tags.append(tag)
+			events.append("new_tag")
+	var q := Proposal.quantity_from(text)
+	if q > 0 and q != st.quantity:
+		st.quantity = q
+		events.append("quantity")
 
 
 static func _track_promises(st: ConversationState, a: Dictionary, d: Dictionary, events: Array) -> void:

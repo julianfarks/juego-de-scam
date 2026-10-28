@@ -110,27 +110,63 @@ func _run() -> void:
 	lead["name"] = "Chucho Carcajada"
 	office._start_call(lead, true)
 	await wait(1.0)
-	await shot("03_oferta")
+	await shot("03_ficha")
 	var cs: CallScreen = office.call_screen
-	cs._begin_call("garantia_tostadora")
+	cs._begin_call()
 	var s: CallSession = cs.session
 	t0 = Time.get_ticks_msec()
-	while s.busy or s.st.history.is_empty():
+	while (s.phase in ["", "preparando", "pensando"]) and Time.get_ticks_msec() - t0 < 300000:
 		await wait(0.5)
-		if Time.get_ticks_msec() - t0 > 600000:
-			break
 	check(s.mode == "ia", "la llamada usa la IA local (modo %s)" % s.mode)
+	if s.phase == "error":
+		say("El saludo falló (%s): se reintenta" % s.last_error)
+		await s.retry()
 	say("Saludo del cliente (%.1f s): %s" % [(Time.get_ticks_msec() - t0) / 1000.0, s.st.history[-1]["text"] if not s.st.history.is_empty() else "-"])
-	for line in ["Hola, le llamo de TeleTimo para ofrecerle una garantía para su tostadora.", "Cubre todo, hasta si se pone triste. Cuesta 29 pesos al mes.", "¿Y usted a qué se dedica?"]:
+	# Conversación LIBRE de 10 intercambios: producto inventado, cambio de propuesta,
+	# cambio de tema, broma, negociación con cantidad, pregunta de memoria.
+	var script_lines := [
+		"Buenas, le llamo de TeleTimo. Tengo un queso artesanal de cabra que le va a encantar.",
+		"Está hecho con una receta familiar de mi abuela y tiene un sabor muy diferente.",
+		"Cuesta 20 pesos la pieza.",
+		"Y además se lo llevamos a domicilio sin coste.",
+		"Oiga, ¿y usted a qué se dedica?",
+		"Jaja, qué bueno. ¿Sabe por qué el queso nunca miente? Porque es muy curado.",
+		"Volviendo al queso: si se lleva dos piezas se las dejo en 18 pesos cada una.",
+		"¿Recuerda qué le estaba ofreciendo y a qué precio?",
+		"Le doy garantía: si no le gusta, le devolvemos el dinero.",
+		"Entonces, ¿le preparo las dos piezas?",
+	]
+	var stuck := 0
+	var memory_answer := ""
+	for line in script_lines:
+		if not s.active:
+			break
 		cs._say(line, false)
 		t0 = Time.get_ticks_msec()
 		await wait(0.3)
-		while s.busy:
+		while s.phase == "pensando" and Time.get_ticks_msec() - t0 < 200000:
 			await wait(0.5)
-		say("Vendedor: %s\n            Cliente (%.1f s): %s" % [line, (Time.get_ticks_msec() - t0) / 1000.0, s.st.history[-1]["text"]])
+		if s.phase == "pensando":
+			stuck += 1
+		if s.phase == "error":
+			say("  Error de la IA (%s) tras %.1f s: se pulsa Reintentar" % [s.last_error, (Time.get_ticks_msec() - t0) / 1000.0])
+			await s.retry()
+			while s.phase == "pensando":
+				await wait(0.5)
+			if s.phase == "error":
+				say("  Sigue fallando: «Seguir sin IA»")
+				s.continue_basic()
+		var reply: String = s.st.history[-1]["text"] if s.st.history[-1]["who"] == "client" else "(sin respuesta)"
+		if line.begins_with("¿Recuerda"):
+			memory_answer = reply
+		say("Vendedor: %s\n            Cliente (%.1f s): %s" % [line, (Time.get_ticks_msec() - t0) / 1000.0, reply])
 	await shot("04_llamada")
 	check(last_shot_colors > 20, "la pantalla de llamada se dibuja (%d colores)" % last_shot_colors)
-	check(s.ai_turns >= 3, "el cliente respondió con la IA (%d turnos)" % s.ai_turns)
+	check(stuck == 0, "ninguna respuesta se quedó «pensando» sin límite")
+	check(s.ai_turns >= 8, "el cliente respondió con la IA (%d turnos de IA, %d errores)" % [s.ai_turns, s.errors])
+	check(s.st.proposal.to_lower().contains("queso"), "el cliente recuerda la propuesta inventada («%s»)" % s.st.proposal)
+	check(s.st.stated_price == 18 and s.st.quantity == 2, "las reglas registran el precio negociado y la cantidad (%d × %d)" % [s.st.stated_price, s.st.quantity])
+	check(memory_answer.to_lower().contains("queso") or memory_answer.contains("18") or memory_answer.contains("20") or memory_answer.to_lower().contains("dieciocho") or memory_answer.to_lower().contains("veinte"), "responde a la pregunta de memoria con lo hablado («%s»)" % memory_answer)
 	# 4. Voz: el cliente habla con la voz neuronal y Whisper entiende una frase sintetizada
 	if Brain.tts_ok and Brain.stt != null:
 		var eng: Object = await Brain.get_tts("ef_dora")
@@ -142,16 +178,24 @@ func _run() -> void:
 		t0 = Time.get_ticks_msec()
 		var heard: String = await Brain.stt.transcribe_pcm(wav.slice(44), st.mix_rate if st else 24000)
 		check(heard.to_lower().contains("cuesta") or heard.to_lower().contains("costar") or heard.to_lower().contains("mes"), "Whisper transcribe español: «%s» (%.1f s)" % [heard, (Time.get_ticks_msec() - t0) / 1000.0])
-	# 5. Cierre por reglas
+	# 5. Cierre por reglas (se fuerza un cliente muy receptivo para comprobar el registro)
+	var bal0 := int(Save.data["money"])
 	s.st.trust = 95.0
 	s.st.understanding = 90.0
 	s.st.suspicion = 0.0
 	s.st.offer_explained = true
 	s.st.pending_objections.clear()
-	cs._ask_payment()
 	t0 = Time.get_ticks_msec()
-	while s.active and Time.get_ticks_msec() - t0 < 300000:
+	var tries := 0
+	while s.active and tries < 4 and Time.get_ticks_msec() - t0 < 400000:
+		if s.phase == "error":
+			s.continue_basic()
+		if s.phase == "listo":
+			cs._ask_payment()
+			tries += 1
 		await wait(0.5)
+	if s.active:
+		s.player_hangs_up()
 	await wait(1.0)
 	await shot("05_venta")
 	check(not s.active, "la llamada termina con un resultado (%s)" % s.st.outcome)
@@ -162,8 +206,12 @@ func _run() -> void:
 		cs.finish()
 	check(int(Game.ledger["calls"]) == 1, "la llamada cuenta en la jornada")
 	var income: int = Game.ledger["income"]
-	var offer_max := int(OfferDB.get_o("garantia_tostadora")["max"])
-	check(income <= offer_max, "importe dentro de las reglas (%d ≤ %d)" % [income, offer_max])
+	if s.st.outcome == "success":
+		var tx: Dictionary = Save.data["transactions"][-1]
+		check(int(tx["amount"]) == 36 and String(tx["proposal"]).to_lower().contains("queso"), "transacción registrada: %s, %d × %d = %d" % [tx["proposal"], int(tx["unit_price"]), int(tx["quantity"]), int(tx["amount"])])
+		check(int(Save.data["money"]) == bal0 + int(tx["commission"]), "el saldo sube con la comisión (%d → %d)" % [bal0, int(Save.data["money"])])
+	else:
+		check(income == 0, "sin venta no hay ingreso (resultado: %s)" % s.st.outcome)
 	# 6. Fin de jornada y guardado
 	Game.shift_left = 0.0
 	t0 = Time.get_ticks_msec()

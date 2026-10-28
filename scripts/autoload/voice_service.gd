@@ -133,9 +133,15 @@ func speak(text: String, profile: Dictionary) -> void:
 			var sentences := _split_sentences(text)
 			var first := true
 			for s in sentences:
-				var wav: PackedByteArray = await engine.synthesize(s)
+				var eng := engine
+				var sentence: String = s
+				var tr := await Timed.run(func(): return await eng.synthesize(sentence), 25000)
 				if token != _speech_token:
 					return
+				if not tr["ok"]:
+					AILog.add("voz", "Kokoro no generó la frase a tiempo (%s): se sigue con la siguiente" % ("tiempo agotado" if tr["timeout"] else "error"))
+					continue
+				var wav: PackedByteArray = tr["value"] if tr["value"] is PackedByteArray else PackedByteArray()
 				var stream := AudioStreamWAV.load_from_buffer(wav) if wav.size() > 100 else null
 				if stream == null:
 					continue
@@ -293,12 +299,19 @@ func stop_listening() -> void:
 		_fail("No te he oído. Acércate al micrófono e inténtalo otra vez.")
 		return
 	_set_mic_state("transcribing")
-	var text: String = await Brain.stt.transcribe_pcm(speech, RATE)
+	var stt_obj: Object = Brain.stt
+	var t0 := Time.get_ticks_msec()
+	var r := await Timed.run(func(): return await stt_obj.transcribe_pcm(speech, RATE), 30000)
 	if mic_state != "transcribing":
 		return
-	text = text.strip_edges()
+	if not r["ok"]:
+		AILog.add("voz", "Whisper no terminó a tiempo (%d s de audio)" % int(speech.size() / 2.0 / RATE))
+		_fail("La transcripción tardó demasiado. Repítelo o escríbelo.")
+		return
+	var text: String = str(r["value"]).strip_edges()
+	AILog.add("voz", "Whisper: %.1f s de audio en %.1f s" % [speech.size() / 2.0 / RATE, (Time.get_ticks_msec() - t0) / 1000.0])
 	if text.length() < 2 or text in ["[BLANK_AUDIO]", "(silencio)"]:
-		_fail("No he entendido lo que dijiste. Repítelo, por favor.")
+		_fail("No he oído ninguna frase clara. Repítelo más cerca del micrófono, o escríbelo.")
 		return
 	_set_mic_state("processing")
 	Save.stat_add("voice_turns")

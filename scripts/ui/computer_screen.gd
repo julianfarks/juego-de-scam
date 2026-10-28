@@ -171,7 +171,7 @@ func _app_phone() -> void:
 		var c := ClientDB.get_c(lead["client_id"])
 		var tag := " [LE DEBES UNA LLAMADA]" if lead.get("callback", false) else ""
 		info.add_child(_dark("%s  %s%s" % [lead["name"], "★".repeat(int(lead["stars"])), tag], 22))
-		var sub: String = "Oferta sugerida: " + OfferDB.get_o(lead["offer"])["name"]
+		var sub: String = "Llamada libre · idea opcional: " + OfferDB.get_o(lead["offer"])["name"]
 		sub += "  ·  " + PersonalityDB.get_p(c["personality"])["name"]
 		info.add_child(_dark(sub, 17, Color("555555")))
 		h.add_child(info)
@@ -274,19 +274,70 @@ func _app_goals() -> void:
 
 
 func _app_tx() -> void:
-	var b := _app_header("Transacciones simuladas")
-	b.add_child(_dark("Todas las tarjetas son ficticias (prefijo 0000, inservibles).", 18, Color("a93226")))
-	var list: Array = Save.data["transactions"].duplicate()
-	list.reverse()
-	if list.is_empty():
-		b.add_child(_dark("Sin transacciones todavía."))
-	for t in list:
-		b.add_child(_dark("Día %d · %s · %s · %s · %s" % [int(t["day"]), t["client"], t["offer"], UIKit.money(int(t["amount"])), t.get("card", "")], 19))
+	var b := _app_header("Transacciones y saldo")
+	b.add_child(_dark("Todo es dinero de juego. Las tarjetas son ficticias (prefijo 0000, inservibles).", 17, Color("a93226")))
+	# Resumen
+	var sp := UIKit.panel(Color("e8f6ef"), 12, 12)
+	var sv := UIKit.vbox(4)
+	sp.add_child(sv)
+	sv.add_child(_dark("Saldo: %s" % UIKit.money(int(Save.data["money"])), 30, Color("145a32")))
+	if Game.in_shift:
+		var q := Game.quota()
+		sv.add_child(_dark("Hoy (día %d): ventas %s de %s de cuota · tu comisión %s · neto del día %s" % [Game.day, UIKit.money(int(Game.ledger["income"])), UIKit.money(q), UIKit.money(int(Game.ledger.get("commissions", 0))), UIKit.money(int(Game.ledger.get("net", 0)))], 19))
+		sv.add_child(UIKit.bar(mini(int(Game.ledger["income"]), q), q, UIKit.C_GOOD, 16))
+		sv.add_child(_dark("Llamadas: %d · ventas: %d · colgadas: %d · mejor venta: %s" % [Game.ledger["calls"], Game.ledger["successes"], Game.ledger["hangups"], UIKit.money(int(Game.ledger["best_sale"]))], 18, Color("555555")))
+	sv.add_child(_dark("Comisión por venta: %d %% del importe (más con mejoras). Las ventas suman a la cuota; tu saldo cobra la comisión al momento. Al final del día se pagan los gastos." % int(Economy.COMMISSION_RATE * 100), 16, Color("555555")))
+	b.add_child(sp)
+	# Pestañas: ventas / movimientos / llamadas de hoy
+	var tabs := UIKit.hbox(8)
+	b.add_child(tabs)
+	var area := UIKit.vbox(6)
+	b.add_child(area)
+	var show_sales := func() -> void:
+		for c in area.get_children():
+			c.queue_free()
+		var list: Array = Save.data["transactions"].duplicate()
+		list.reverse()
+		if list.is_empty():
+			area.add_child(_dark("Sin ventas todavía. Cierra una llamada con «Pedir datos de pago»."))
+		for t in list:
+			var row := UIKit.panel(Color("ece8de"), 10, 8)
+			var v := UIKit.vbox(2)
+			row.add_child(v)
+			v.add_child(_dark("%s · Día %d · %s" % [t.get("id", "TX"), int(t["day"]), t["client"]], 18, Color("555555")))
+			v.add_child(_dark("%s" % t.get("proposal", t.get("offer", "")), 21))
+			v.add_child(_dark("%s × %d = %s  ·  comisión %s  ·  %s  ·  %s" % [UIKit.money(int(t.get("unit_price", t["amount"]))), int(t.get("quantity", 1)), UIKit.money(int(t["amount"])), UIKit.money(int(t.get("commission", 0))), t.get("status", "completada"), t.get("card", "")], 18, Color("1f618d")))
+			area.add_child(row)
+	var show_moves := func() -> void:
+		for c in area.get_children():
+			c.queue_free()
+		var list: Array = Save.data.get("movements", []).duplicate()
+		list.reverse()
+		if list.is_empty():
+			area.add_child(_dark("Sin movimientos todavía."))
+		var names := {"comision": "Comisión", "incentivo": "Incentivo", "bono": "Bono", "recompensa": "Recompensa", "multa": "Multa", "gasto": "Gasto", "compra": "Compra"}
+		for m in list.slice(0, 80):
+			var amt := int(m["amount"])
+			area.add_child(_dark("Día %d · %s: %s  %s%s  → saldo %s" % [int(m["day"]), names.get(m["kind"], m["kind"]), m["label"], "+" if amt > 0 else "", UIKit.money(amt), UIKit.money(int(m["balance"]))], 18, Color("1e8449") if amt > 0 else Color("a93226")))
+	var show_calls := func() -> void:
+		for c in area.get_children():
+			c.queue_free()
+		if not Game.in_shift or Game.ledger["results"].is_empty():
+			area.add_child(_dark("Aún no has hecho llamadas hoy."))
+			return
+		var rs: Array = Game.ledger["results"].duplicate()
+		rs.reverse()
+		for r in rs:
+			area.add_child(_dark("%s · %s · %s%s" % [r["client_name"], r.get("offer_name", ""), r["outcome_text"], ("  ·  %s" % UIKit.money(int(r.get("final_amount", 0)))) if int(r.get("final_amount", 0)) > 0 else ""], 18, Color("1e8449") if r["outcome"] == "success" else Color("555555")))
+	tabs.add_child(UIKit.button("Ventas", show_sales, UIKit.C_BLUE, 48, 18))
+	tabs.add_child(UIKit.button("Movimientos del saldo", show_moves, UIKit.C_BLUE, 48, 18))
+	tabs.add_child(UIKit.button("Llamadas de hoy", show_calls, UIKit.C_BLUE, 48, 18))
+	show_sales.call()
 
 
 func _app_shop() -> void:
 	var b := _app_header("Tienda de mejoras")
-	b.add_child(_dark("Saldo disponible: %s (se cobra al final de cada jornada)" % UIKit.money(int(Save.data["money"])), 22, Color("1f618d")))
+	b.add_child(_dark("Saldo disponible: %s (tus comisiones se suman al momento; los gastos se pagan al final del día)" % UIKit.money(int(Save.data["money"])), 22, Color("1f618d")))
 	var day := int(Save.data["campaign"]["max_day_unlocked"])
 	for id in UpgradeDB.UPGRADES.keys():
 		var u: Dictionary = UpgradeDB.UPGRADES[id]

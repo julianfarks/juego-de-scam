@@ -80,7 +80,7 @@ static func remark(kind: String, rng: RandomNumberGenerator, data: Dictionary = 
 static func call_comment(st: ConversationState, outcome: String, amount: int, rng: RandomNumberGenerator) -> String:
 	var c := ClientDB.get_c(st.client_id)
 	var first := String(c["name"]).split(" ")[0]
-	var offer := String(OfferDB.get_o(st.offer_id)["name"]).to_lower()
+	var offer := st.proposal_label().to_lower()
 	if outcome == "success":
 		if st.contradictions.size() > 0:
 			return "%s compró %s a pesar de tus %d contradicciones. Milagro de oficina." % [first, offer, st.contradictions.size()]

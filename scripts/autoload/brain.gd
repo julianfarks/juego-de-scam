@@ -59,6 +59,9 @@ func _ready() -> void:
 	llm_pack = choose_llm_pack()
 	_refresh_presence()
 	Settings.changed.connect(_on_setting)
+	AILog.add("inicio", "%s %s · %d núcleos · RAM %.1f GB · cerebro %s · GPU %s" % [OS.get_name(), OS.get_model_name(), OS.get_processor_count(), total_ram_bytes() / 1073741824.0, llm_pack, "activada" if Settings.get_value("ai_gpu") else "desactivada"])
+	for r in verify_packs():
+		AILog.add("archivos", "%s: %s" % [r["label"], r["detail"]])
 
 
 ## Cambiar el tamaño del cerebro en Ajustes se aplica al momento: se libera el
@@ -120,6 +123,51 @@ func pack_present(id: String) -> bool:
 		return FileAccess.file_exists(DIR.path_join(p["dir"]).path_join(".ok"))
 	var f := DIR.path_join(p["file"])
 	return FileAccess.file_exists(f) and FileAccess.get_size(f) == int(p["size"])
+
+
+## Archivos que debe contener cada paquete comprimido (para comprobar que la
+## descompresión fue completa sin volver a descargar nada).
+const PACK_FILES := {
+	"stt": ["config.json", "tokenizer.json", "onnx/encoder_model_q4.onnx", "onnx/decoder_model_merged_q4.onnx"],
+	"vad": ["onnx/model.onnx"],
+	"tts": ["model.onnx", "config.json", "voices/ef_dora.safetensors", "voices/em_alex.safetensors"],
+}
+
+
+## Comprueba los modelos YA descargados sin borrarlos ni volver a descargarlos:
+## tamaño exacto, cabecera GGUF del modelo de lenguaje y archivos de cada paquete.
+func verify_packs() -> Array:
+	var out := []
+	for id in needed_packs():
+		var p: Dictionary = PACKS[id]
+		var r := {"id": id, "label": p["label"], "ok": false, "detail": ""}
+		if p.has("dir"):
+			var d := DIR.path_join(p["dir"])
+			if not FileAccess.file_exists(d.path_join(".ok")):
+				r["detail"] = "sin descargar"
+			else:
+				var missing := []
+				for rel in PACK_FILES.get(id, []):
+					var full := d.path_join(rel)
+					if not FileAccess.file_exists(full):
+						missing.append(rel)
+				r["ok"] = missing.is_empty()
+				r["detail"] = "completo" if r["ok"] else "faltan: " + ", ".join(PackedStringArray(missing))
+		else:
+			var f := DIR.path_join(p["file"])
+			if not FileAccess.file_exists(f):
+				r["detail"] = "sin descargar" + (" (descarga a medias)" if FileAccess.file_exists(f + ".part") or FileAccess.file_exists(f + ".001") else "")
+			else:
+				var size := FileAccess.get_size(f)
+				var fh := FileAccess.open(f, FileAccess.READ)
+				var magic := fh.get_buffer(4).get_string_from_ascii() if fh else ""
+				var version := fh.get_32() if fh else 0
+				if fh:
+					fh.close()
+				r["ok"] = size == int(p["size"]) and magic == "GGUF"
+				r["detail"] = "%.2f GB, cabecera %s v%d%s" % [size / 1e9, magic if magic != "" else "?", version, "" if size == int(p["size"]) else " — TAMAÑO INCORRECTO (esperado %d)" % int(p["size"])]
+		out.append(r)
+	return out
 
 
 func needed_packs() -> Array:
@@ -347,35 +395,93 @@ func _remove_tree(path: String) -> void:
 
 # ------------------------------------------------------------------ Carga
 
-## Carga el LLM. Si una carga con GPU dejó el juego colgado o cerrado la vez anterior,
-## esta vez se usa solo la CPU (marca persistente "gpu_probe").
+## Carga el LLM y lo PRUEBA (respuesta corta con tiempo límite) antes de darlo por
+## listo. Si la GPU está activada y no responde, se recarga en el procesador y se
+## desactiva la GPU para la próxima vez. Todo queda en el registro de diagnóstico.
 func load_llm() -> bool:
 	if llm_state == "ready":
 		return true
 	if not available or not pack_present(llm_pack):
 		return false
 	llm_state = "loading"
+	last_error = ""
 	state_changed.emit()
 	var want_gpu := bool(Settings.get_value("ai_gpu")) and not bool(Settings.get_value("gpu_probe"))
-	if want_gpu:
-		Settings.set_value("gpu_probe", true)
-	var t0 := Time.get_ticks_msec()
-	model = await ClassDB.class_call_static("NobodyWhoModel", "create", ProjectSettings.globalize_path(pack_path(llm_pack)), {"use_gpu": want_gpu})
-	if model == null and want_gpu:
-		want_gpu = false
-		model = await ClassDB.class_call_static("NobodyWhoModel", "create", ProjectSettings.globalize_path(pack_path(llm_pack)), {"use_gpu": false})
-	if want_gpu:
-		Settings.set_value("gpu_probe", false)
-	if model == null:
+	var ok := await _load_and_test(want_gpu)
+	if not ok and want_gpu:
+		AILog.add("carga", "La prueba con GPU falló: se reintenta solo con el procesador y se desactiva la GPU.")
+		Settings.set_value("ai_gpu", false)
+		ok = await _load_and_test(false)
+	if not ok:
+		model = null
 		llm_state = "error"
-		last_error = "No se pudo cargar el modelo de lenguaje"
 		state_changed.emit()
 		return false
-	gpu_used = want_gpu
-	load_ms = Time.get_ticks_msec() - t0
 	llm_state = "ready"
 	state_changed.emit()
 	return true
+
+
+func _load_and_test(use_gpu: bool) -> bool:
+	model = null
+	if use_gpu:
+		Settings.set_value("gpu_probe", true)  # si el juego se cierra cargando, la próxima vez sin GPU
+	var path := ProjectSettings.globalize_path(pack_path(llm_pack))
+	AILog.add("carga", "Cargando %s (%s)…" % [PACKS[llm_pack]["label"], "GPU" if use_gpu else "procesador"])
+	var t0 := Time.get_ticks_msec()
+	var r := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoModel", "create", path, {"use_gpu": use_gpu}), 600000)
+	if use_gpu:
+		Settings.set_value("gpu_probe", false)
+	if not r["ok"] or r["value"] == null:
+		last_error = "No se pudo cargar el modelo de lenguaje" + (" (tiempo agotado)" if r["timeout"] else "")
+		AILog.add("error", last_error)
+		return false
+	model = r["value"]
+	gpu_used = use_gpu
+	load_ms = Time.get_ticks_msec() - t0
+	AILog.add("carga", "Modelo cargado en %.1f s" % (load_ms / 1000.0))
+	# Prueba real: ¿devuelve tokens? (antes esto no se comprobaba y una GPU bloqueada
+	# dejaba al cliente «pensando» para siempre)
+	llm_state = "ready"
+	var test := await self_test(45000)
+	llm_state = "loading"
+	if not test["ok"]:
+		last_error = "El modelo se cargó pero no responde: %s" % test["error_text"]
+		AILog.add("error", last_error)
+		model = null
+		return false
+	return true
+
+
+## Prueba rápida del modelo: una respuesta corta con tiempo límite.
+## Devuelve {ok, error, error_text, first_ms, total_ms, tokens, tok_per_s, text}.
+func self_test(first_limit_ms := 45000) -> Dictionary:
+	var out := {"ok": false, "error": "", "error_text": "", "first_ms": -1, "total_ms": 0, "tokens": 0, "tok_per_s": 0.0, "text": ""}
+	if model == null:
+		out["error"] = "sin_modelo"
+		out["error_text"] = "El modelo no está cargado"
+		return out
+	var chat: Object = await new_chat("Eres un cliente que contesta al teléfono. Responde en español, muy breve.", {"type": "object", "properties": {"respuesta": {"type": "string", "maxLength": 80}}, "required": ["respuesta"], "additionalProperties": false}, 0.7)
+	if chat == null:
+		out["error"] = "sin_chat"
+		out["error_text"] = "No se pudo crear la conversación"
+		AILog.add("prueba", out["error_text"])
+		return out
+	var r := await AIStream.read(chat, chat.ask("Saluda en una frase corta."), Callable(), {}, {"first": first_limit_ms, "stall": 20000, "total": first_limit_ms + 30000})
+	out["first_ms"] = r["first_ms"]
+	out["total_ms"] = r["total_ms"]
+	out["tokens"] = r["tokens"]
+	out["text"] = r["text"]
+	var gen_ms := maxi(1, r["total_ms"] - maxi(0, r["first_ms"]))
+	out["tok_per_s"] = float(maxi(0, r["tokens"] - 1)) / (gen_ms / 1000.0)
+	var j = JSON.parse_string(r["text"]) if r["ok"] else null
+	out["ok"] = r["ok"] and j is Dictionary and str(j.get("respuesta", "")) != ""
+	out["error"] = r["error"] if r["error"] != "" else ("" if out["ok"] else "json")
+	out["error_text"] = AIStream.error_text(out["error"]) if out["error"] != "json" else "La respuesta no tenía el formato esperado"
+	AILog.add("prueba", "%s · primer token %s · %d tokens en %.1f s (%.1f tokens/s)%s" % [
+		"OK" if out["ok"] else "FALLO", ("%.1f s" % (r["first_ms"] / 1000.0)) if r["first_ms"] >= 0 else "nunca",
+		r["tokens"], r["total_ms"] / 1000.0, out["tok_per_s"], "" if out["ok"] else " · " + out["error_text"]])
+	return out
 
 
 func load_voice() -> bool:
@@ -397,10 +503,16 @@ func load_voice() -> bool:
 		var tmp := ProjectSettings.globalize_path("user://tmp")
 		DirAccess.make_dir_recursive_absolute(tmp)
 		OS.set_environment("TMPDIR", tmp)
-	stt = await ClassDB.class_call_static("NobodyWhoSpeechToText", "create", ProjectSettings.globalize_path(pack_path("stt")), {"language": "es", "quantization": "q4"})
+	var t0 := Time.get_ticks_msec()
+	var stt_path := ProjectSettings.globalize_path(pack_path("stt"))
+	var rs := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoSpeechToText", "create", stt_path, {"language": "es", "quantization": "q4"}), 90000)
+	stt = rs["value"] if rs["ok"] else null
+	AILog.add("voz", "Whisper %s en %.1f s" % ["cargado" if stt != null else ("NO cargado (tiempo agotado)" if rs["timeout"] else "NO cargado"), (Time.get_ticks_msec() - t0) / 1000.0])
 	vad_source = ProjectSettings.globalize_path(pack_path("vad"))
+	t0 = Time.get_ticks_msec()
 	var tts_engine: Object = await get_tts("ef_dora")
 	tts_ok = tts_engine != null
+	AILog.add("voz", "Kokoro %s en %.1f s" % ["cargado" if tts_ok else "NO cargado", (Time.get_ticks_msec() - t0) / 1000.0])
 	if stt == null and not tts_ok:
 		voice_state = "error"
 		last_error = "No se pudieron cargar los modelos de voz"
@@ -420,7 +532,9 @@ func load_voice() -> bool:
 func get_tts(voice: String) -> Object:
 	if tts_engines.has(voice):
 		return tts_engines[voice]
-	var e: Object = await ClassDB.class_call_static("NobodyWhoTextToSpeech", "create", ProjectSettings.globalize_path(pack_path("tts")), {"architecture": "kokoro", "voice": voice, "language": "es", "device": "cpu"})
+	var path := ProjectSettings.globalize_path(pack_path("tts"))
+	var r := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoTextToSpeech", "create", path, {"architecture": "kokoro", "voice": voice, "language": "es", "device": "cpu"}), 90000)
+	var e: Object = r["value"] if r["ok"] else null
 	if e != null:
 		tts_engines[voice] = e
 	return e
@@ -434,14 +548,19 @@ func new_vad() -> Object:
 
 ## Nueva conversación con el modelo compartido.
 func new_chat(system_prompt: String, schema: Dictionary, temperature := 0.8) -> Object:
-	if llm_state != "ready":
+	if llm_state != "ready" or model == null:
 		return null
 	var sampler = ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(JSON.stringify(schema)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(temperature).top_p(0.92, 1).dist()
-	return await ClassDB.class_call_static("NobodyWhoChat", "create", model, {
+	var m := model
+	var r := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoChat", "create", m, {
 		"system_prompt": system_prompt, "n_ctx": 4096, "sampler": sampler,
 		"template_variables": {"enable_thinking": false},
-		"context_shift": {"keep_first_turns": 1, "keep_last_turns": 4, "target": 0.6},
-	})
+		"context_shift": {"keep_first_turns": 1, "keep_last_turns": 6, "target": 0.6},
+	}), 30000)
+	if not r["ok"] or r["value"] == null:
+		AILog.add("error", "No se pudo crear la conversación%s" % (" (tiempo agotado)" if r["timeout"] else ""))
+		return null
+	return r["value"]
 
 
 func download_percent() -> float:
@@ -466,10 +585,12 @@ func boss_comment(stats: Dictionary) -> String:
 	var data := "Día %d. Ingresos ficticios: %d de una cuota de %d (%s). Nota: %s. Llamadas: %d, ventas: %d, le colgaron %d veces, contradicciones pilladas: %d, mejor venta: %d, incidentes: %d, llamadas perdidas: %d." % [
 		stats["day"], stats["income"], stats["quota"], "cuota cumplida" if stats["passed"] else "NO llegó a la cuota", stats["grade"],
 		stats["calls"], stats["successes"], stats["hangups"], stats["contradictions"], stats["best_sale"], stats["incidents"], stats["missed"]]
-	var t0 := Time.get_ticks_msec()
-	var out: String = await chat.ask(data).completed()
-	record_turn(Time.get_ticks_msec() - t0)
-	var j = JSON.parse_string(out)
+	var r := await AIStream.read(chat, chat.ask(data))
+	if not r["ok"]:
+		AILog.add("jefe", "Comentario del jefe sin IA: %s" % AIStream.error_text(r["error"]))
+		return ""
+	record_turn(r["total_ms"])
+	var j = JSON.parse_string(r["text"])
 	if j is Dictionary:
 		return AIResponse.sanitize_text(str(j.get("comentario", "")), 420)
 	return ""

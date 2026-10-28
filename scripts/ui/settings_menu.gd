@@ -178,7 +178,7 @@ func _tab_voice() -> void:
 	h.add_child(dl)
 	h.add_child(UIKit.button("Pausar", func() -> void: Brain.cancel_download(), UIKit.C_PANEL2, 60, 22))
 	_option_row(p, "Tamaño del cerebro", "llm_size", ["auto", "normal", "ligero"], ["Automático según la memoria", "Normal: Gemma 4 E2B (mejor conversación, 3,1 GB, 6 GB de RAM)", "Ligero: Qwen3.5 0.8B (peor conversación, 0,5 GB)"])
-	_check_row(p, "Usar la GPU para la IA (si da problemas, desactívalo)", "ai_gpu")
+	_check_row(p, "Usar la GPU para la conversación (EXPERIMENTAL: en muchos móviles Snapdragon/Adreno bloquea la IA; si la activas y falla, el juego vuelve solo al procesador)", "ai_gpu")
 	_option_row(p, Loc.t("tts_engine"), "tts_mode", ["ia", "system", "off"], ["Voces neuronales (IA en el móvil)", "Voz del sistema Android", "Sin voz (solo subtítulos)"])
 	_check_row(p, "Terminar de escuchar al detectar silencio", "vad_auto_stop")
 	var consent := bool(Settings.get_value("mic_consent"))
@@ -189,9 +189,52 @@ func _tab_voice() -> void:
 		if Brain.voice_state != "ready" and Brain.missing_packs().is_empty():
 			await Brain.load_voice()
 		Voice.speak("¡Hola! Soy un cliente de prueba y no pienso comprarle nada… o quizá sí.", {"id": "test", "female": true, "pitch": 1.05, "speed": 1.0}), UIKit.C_PANEL2, 56, 20))
+	# Diagnóstico: comprobar archivos, probar la IA y ver/copiar el registro técnico
+	p.add_child(UIKit.label("Diagnóstico", 24, UIKit.C_ACCENT))
+	var diag := UIKit.label("", 19, UIKit.C_MUTED)
+	p.add_child(diag)
+	var dh := UIKit.hbox(8)
+	p.add_child(dh)
+	dh.add_child(UIKit.button("Comprobar archivos", func() -> void:
+		var out := []
+		for r in Brain.verify_packs():
+			out.append("%s %s: %s" % ["✔" if r["ok"] else "✘", r["label"], r["detail"]])
+		diag.text = "\n".join(PackedStringArray(out)), UIKit.C_PANEL2, 56, 19))
+	dh.add_child(UIKit.button("Probar la IA", func() -> void:
+		if Brain.llm_state != "ready":
+			diag.text = "La IA no está cargada (%s). Pulsa «Descargar modelos de IA» para cargarla." % Brain.status_text()
+			if Brain.missing_packs().is_empty() and Brain.llm_state != "loading":
+				Brain.load_all()
+			return
+		diag.text = "Probando (máximo 45 s)…"
+		var t: Dictionary = await Brain.self_test()
+		if not is_instance_valid(diag):
+			return
+		if t["ok"]:
+			diag.text = "✔ La IA responde. Primer token en %.1f s; %d tokens en %.1f s (%.1f tokens/s). Respuesta: %s" % [t["first_ms"] / 1000.0, t["tokens"], t["total_ms"] / 1000.0, t["tok_per_s"], AIResponse.sanitize_text(t["text"], 120)]
+		else:
+			diag.text = "✘ La IA no respondió bien: %s. Mira el registro y, si quieres, cópialo para enviarlo." % t["error_text"], UIKit.C_PANEL2, 56, 19))
+	dh.add_child(UIKit.button("Ver registro", func() -> void: _show_log(), UIKit.C_PANEL2, 56, 19))
 	p.add_child(UIKit.button("Borrar modelos descargados (libera espacio)", func() -> void:
 		Brain.delete_models()
 		refresh.call(), Color("7b241c"), 56, 20))
+
+
+func _show_log() -> void:
+	var md := UIKit.modal(self, 900)
+	var box: VBoxContainer = md["box"]
+	box.add_child(UIKit.label("Registro técnico de la IA", 26, UIKit.C_ACCENT))
+	box.add_child(UIKit.label("Solo tiempos, tamaños de archivos y errores; nunca lo que dices.", 17, UIKit.C_MUTED))
+	var te := TextEdit.new()
+	te.text = AILog.text().right(8000)
+	te.editable = false
+	te.custom_minimum_size = Vector2(840, 420)
+	te.add_theme_font_size_override("font_size", 15)
+	box.add_child(te)
+	var h := UIKit.hbox(10)
+	box.add_child(h)
+	h.add_child(UIKit.button("Copiar", func() -> void: DisplayServer.clipboard_set(AILog.text()), UIKit.C_BLUE))
+	h.add_child(UIKit.button("Cerrar", func() -> void: md["layer"].queue_free(), UIKit.C_PANEL2))
 
 
 func _tab_controls() -> void:
