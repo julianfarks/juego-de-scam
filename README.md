@@ -4,26 +4,37 @@
 
 > Todo es ficticio: personas, empresas, ofertas, dinero y tarjetas. Las tarjetas del juego empiezan por `0000`, no pasan la comprobación de Luhn y caducan el mes 13. El juego nunca pide datos financieros reales. Es una parodia: las estafas telefónicas reales hacen daño de verdad.
 
-## Estado (27/10/2026)
+## Estado
 
-| Qué | Resultado | Dónde se comprobó |
-|---|---|---|
-| Pruebas unitarias (reglas, memoria, economía, guardado…) | 240 / 240 | PC (Linux) |
-| Prueba completa dentro del juego con IA real (descarga en dos partes, carga de Gemma, llamada con 4 respuestas de la IA, voz Kokoro, Whisper, venta, fin de jornada, guardado) | 16 / 16 | PC (Linux, 2 núcleos) |
-| La misma prueba en Android | 17 / 17 con la IA respondiendo en personaje (traductor gráfico SwiftShader, pantalla en blanco) · 18 / 19 con gráficos ANGLE: todo se ve, pero la IA no llegó a tiempo y respondió el diálogo básico | Emulador Android 12 x86_64 en GitHub Actions |
-| Conversación larga (13 turnos × 3 personalidades): preguntas, bromas, pregunta personal, contradicción de precio, pago | 0 fallos de formato; recuerda precios y contradicciones | CI, 4 núcleos |
-
-**No se ha probado en un móvil real.** El emulador no tiene micrófono real ni GPU: dibuja con el procesador, el mismo que usa la IA, y por eso las respuestas tardaron 35–150 s. En un móvil la GPU dibuja y el procesador queda para la IA; en CI (4 núcleos, sin gráficos) Gemma tarda unos 8 s por respuesta, pero en un móvil concreto puede ser más o menos. Si un móvil tarda más de 40 s, el juego lo dice y sugiere el cerebro ligero.
-
+<!--ESTADO-->
 
 ## Cómo se juega (sin configurar nada)
 
 1. Instala el APK (Release **`ultima-version`** de este repositorio) y ábrelo.
-2. La primera vez, el juego ofrece **descargar la IA** (una sola vez; se recomienda Wi‑Fi). No hay cuentas, claves, servidores ni campos que rellenar. Puedes jugar mientras se descarga, pero hasta que termine los clientes usan un **diálogo básico por reglas**, y el juego lo indica.
+2. La primera vez, el juego ofrece **descargar la IA** (una sola vez; se recomienda Wi‑Fi). No hay cuentas, claves, servidores ni campos que rellenar. Si ya la descargaste, no se vuelve a bajar: el juego comprueba los archivos (tamaño y cabecera) y los reutiliza.
 3. Empieza la jornada, camina hasta tu mesa con el joystick y contesta el teléfono (o llama desde el ordenador).
-4. Elige la oferta ficticia, pulsa el **micrófono** y habla con naturalidad. El cliente te escucha, piensa y te contesta con su voz; también puedes escribir.
-5. Cuando lo veas convencido, pide los datos de pago. Si acepta o no lo deciden las **reglas del juego** según cómo ha ido la conversación (la IA no puede decidir el dinero).
-6. Al final del día, el jefe te evalúa con datos reales de tu jornada.
+4. **Llamada libre**: vende lo que quieras (un queso artesanal, hierbas, un servicio de jardinería, un seguro absurdo…). Puedes escribir tu primera frase antes de llamar, usar una idea del catálogo opcional o improvisar directamente por micrófono o texto. Puedes cambiar de producto, añadir servicios, negociar el precio, bromear o cambiar de tema: el cliente lo entiende y lo recuerda.
+5. Arriba ves siempre en qué fase está la llamada: *Preparando*, *Tu turno*, *X está pensando… (segundos)*, *Escuchando tu voz*, *Pasando tu voz a texto*, *X habla* o *La IA ha fallado*. A la izquierda, la propuesta tal como la ha entendido el cliente, el precio y la cantidad.
+6. Cuando lo veas convencido, pulsa **Pedir datos de pago** (o pídeselo con tus palabras). Si acepta o no lo deciden las **reglas del juego** (confianza, dudas, contradicciones, precio frente a su presupuesto…), nunca la IA. Sin precio dicho, el cliente te lo pregunta.
+7. La venta queda registrada en la app **Transacciones** del ordenador y tu comisión se suma al saldo al momento. Al final del día, el jefe te evalúa y se pagan los gastos.
+
+### Si la IA falla
+
+La IA nunca puede dejar la llamada «pensando» para siempre: cada respuesta tiene límites reales (primer token: 60 s; atasco a mitad: 25 s; total: 120 s), igual que la voz (Whisper 30 s, Kokoro 25 s por frase). Si se pasa, aparece **«La IA ha fallado»** con tres botones:
+- **Reintentar**: abre una conversación nueva reconstruida con la memoria del juego (por si el motor anterior quedó bloqueado).
+- **Seguir sin IA**: el resto de la llamada usa el diálogo básico, y así se indica en cada respuesta.
+- **Ver detalle**: muestra el registro técnico.
+
+En **Ajustes → IA y voz → Diagnóstico** puedes *Comprobar archivos*, *Probar la IA* (mide el primer token y los tokens por segundo) y *Ver registro* → **Copiar**, para enviar el registro si algo va mal. El registro solo contiene tiempos, tamaños y errores, nunca lo que dices.
+
+**La GPU está desactivada por defecto.** En móviles con GPU Adreno (Snapdragon), NobodyWho descarta Vulkan y usa el backend OpenCL de llama.cpp, que con Gemma 4 puede no devolver nunca el primer token: esa era la causa de que el cliente se quedara «pensando». El procesador de un móvil actual basta. Si activas la GPU y no responde, el juego lo detecta al cargar y vuelve solo al procesador.
+
+### Dinero del juego (todo ficticio)
+
+- **Importe de una venta** = el precio que tú dijiste (el número pegado a «pesos») × la cantidad que propusiste («dos piezas», «tres botes»), con un tope según el presupuesto del cliente. La IA no puede cambiarlo.
+- La venta suma a la **cuota del día**; tú cobras una **comisión** (50 %, más con mejoras) que entra en el saldo al instante.
+- **Movimientos del saldo**: comisiones, incentivos por clientes interesados, bonos, multas del jefe, recompensas de objetivos, bono por cumplir la cuota, gastos diarios y compras. Todo se ve en *Transacciones → Movimientos del saldo* y se guarda.
+- Las tarjetas que aparecen al cerrar una venta son de demostración (prefijo `0000`, inservibles). El juego nunca pide datos reales.
 
 ## Arquitectura de la IA (todo en el dispositivo)
 
@@ -41,11 +52,12 @@
 
 ### Cómo funciona una llamada
 
-1. Al abrir la llamada, el cliente (personalidad + situación aleatoria, p. ej. «estás cocinando») empieza a pensar su saludo mientras eliges la oferta.
-2. Cada frase tuya se manda al modelo junto con **notas verificables del juego** (precio dicho antes, contradicciones, promesas pendientes, paciencia baja, tiempo que queda).
-3. El modelo responde con un JSON forzado por gramática: lo que dice, su emoción, cómo le ha sentado tu frase, su interés (0‑10), su duda principal y si quiere colgar. Mientras escribe, ves los subtítulos; en cuanto termina la frase, empieza a hablar.
-4. El juego aplica ese juicio de forma **acotada y según la personalidad** (confianza, paciencia, sospecha…). Si el modelo repite una frase, se regenera.
-5. Si pides el pago, decide `Economy` con el estado de la llamada y el interés (máx. ±0,15). Luego se le dice al modelo la decisión para que la exprese a su manera.
+1. Mientras ves la ficha del cliente, se prepara su conversación (personalidad, situación aleatoria —«estás cocinando»—, presupuesto) y piensa su saludo.
+2. Cada frase tuya se manda al modelo junto con **notas verificables del juego**: precio que dijiste y si lo bajaste o lo subiste, cantidad, contradicciones, promesas pendientes, paciencia, tiempo que queda y, cada pocos turnos, un recordatorio de la propuesta y de las dudas. Así las conversaciones largas no pierden el hilo.
+3. El modelo responde con un JSON forzado por gramática: lo que dice, su emoción, cómo le ha sentado tu frase, su interés (0‑10), su duda principal, **qué entiende que le estás vendiendo** y si quiere colgar. Ves los subtítulos mientras escribe y la voz empieza en cuanto la frase está completa.
+4. El juego aplica ese juicio de forma **acotada y según la personalidad**. Si el modelo repite una frase, se regenera.
+5. Si pides el pago, decide `Economy` con reglas fijas y después se le dice al modelo la decisión para que la exprese a su manera.
+6. El juego guarda su propia copia de la conversación: si el motor de IA se bloquea, «Reintentar» la reconstruye en una conversación nueva.
 
 ## Características del juego
 
@@ -73,8 +85,8 @@
 
 | Prueba | Qué comprueba | Cómo |
 |---|---|---|
-| Unitarias (240) | Reglas, memoria, personalidades, economía, guardado, diálogo básico | `godot --headless --path . tests/test_runner.tscn` |
-| Evaluación del modelo | Conversación larga en español (preguntas, bromas, contradicción, pago) | `tests/eval/run_eval.sh` (CI: `eval-ia.yml`) |
+| Unitarias (307) | Reglas, memoria, propuestas libres, precios y cantidades, economía, transacciones y saldo, guardado, tiempos límite con una IA falsa que se cuelga, reintento y «seguir sin IA» | `godot --headless --path . tests/test_runner.tscn` |
+| Conversaciones libres con la IA | El MISMO código de la llamada con 8 clientes y 2 guiones (queso con entrega y negociación; jardinería que cambia a hierbas): memoria, cambio de propuesta, tema, broma, pago | `tests/eval/run_eval.sh` (CI: `eval-ia.yml`) |
 | Voz ida y vuelta | Kokoro → Whisper en español, detector de voz | `godot --headless --path . -s tests/eval/voice_eval.gd -- --models=RUTA` |
 | Prueba dentro del juego | Descarga, carga, jornada, llamada con IA, voz, venta, guardado | se activa con `user://autotest.flag` |
 | Emulador Android | Instala el APK y ejecuta la prueba anterior en Android | `android-test.yml` (resultados en la Release `evaluaciones`) |
