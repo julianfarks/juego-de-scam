@@ -114,7 +114,8 @@ static func respond(st: ConversationState, a: Dictionary, rules: Dictionary, rng
 		var pr: Array = st.promises.filter(func(p): return p.get("reminded", false) and not p["fulfilled"])
 		if not pr.is_empty():
 			parts.append("Por cierto, me dijo «%s»… y sigo esperando." % String(pr[-1]["text"]).strip_edges())
-	elif events.has("question_ignored") and parts.size() < 3:
+	elif events.has("question_ignored") and parts.size() < 3 and not st.pending_question.get("nagged", false):
+		st.pending_question["nagged"] = true  # se reclama una sola vez por pregunta
 		parts.append("Y no me ha respondido a lo que le pregunté.")
 	elif events.has("repetition") and parts.size() < 3:
 		parts.append(_pick(rng, ["Eso ya me lo ha dicho.", "Me repite lo mismo una y otra vez."]))

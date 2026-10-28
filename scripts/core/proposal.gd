@@ -42,7 +42,7 @@ static func tags_for(text: String) -> Array:
 ## Cantidad que el vendedor propone («dos cajas», «3 kilos», «media docena»).
 ## Si no dice ninguna, devuelve 0 (sin cantidad explícita). Se limita a MAX_QUANTITY.
 static func quantity_from(text: String) -> int:
-	var norm := IntentClassifier.normalize(text)
+	var norm := IntentClassifier.normalize(text).replace("?", " ")
 	if norm.contains("media docena"):
 		return 6
 	if norm.contains("una docena") or norm.contains(" docena de"):
@@ -74,7 +74,7 @@ static func price_from(text: String) -> int:
 	var re := RegEx.new()
 	re.compile("\\$\\s*(\\d+)")
 	t = re.sub(t, "$1 pesos", true)
-	var words := IntentClassifier.normalize(t).strip_edges().split(" ", false)
+	var words := IntentClassifier.normalize(t).replace("?", " ").strip_edges().split(" ", false)
 	for k in words.size():
 		if CURRENCY.has(words[k]):
 			var window := " " + " ".join(words.slice(maxi(0, k - 4), k)) + " "

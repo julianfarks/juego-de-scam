@@ -226,3 +226,6 @@ func _run() -> void:
 	var done := FileAccess.open(OUT.path_join("terminado.txt"), FileAccess.WRITE)
 	done.store_string("%d %d" % [ok_count, fail_count])
 	done.close()
+	# Cierra el juego al terminar (si no, queda abierto con el modelo cargado en memoria)
+	await wait(3.0)
+	get_tree().quit()

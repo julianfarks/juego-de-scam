@@ -487,6 +487,8 @@ func test_free_proposals() -> void:
 	check(Proposal.price_from("solo $25 al mes") == 25, "precio con símbolo $")
 	check(Proposal.price_from("le dejo tres botes por 12 pesos cada uno") == 12, "tres botes por 12 pesos → 12")
 	check(Proposal.price_from("no tiene precio") == 0, "sin número → sin precio")
+	check(Proposal.price_from("Entonces, ¿le preparo las dos piezas?") == 0, "«¿…las dos piezas?» es una cantidad, no un precio")
+	check(Proposal.quantity_from("¿le preparo las dos piezas?") == 2, "cantidad aunque vaya pegada a «?»")
 	check(Proposal.is_action_label("Confirmar el pago") and not Proposal.is_action_label("Queso artesanal"), "detecta etiquetas de acción")
 	# Memoria de la propuesta y cambio de propuesta sin reiniciar
 	var st := _new_state("pilar")
