@@ -1,7 +1,8 @@
-extends SceneTree
+extends Node
 ## Evaluación de conversaciones LIBRES con la IA local usando EL MISMO CÓDIGO que el
 ## juego (CallSession: memoria, notas, límites de tiempo, cierre por reglas).
-##   godot --headless --path . -s tests/eval/call_eval.gd -- --model=ruta.gguf --client=chucho --script=queso
+##   godot --headless --path . tests/eval/call_eval.tscn -- --model=ruta.gguf --client=chucho --script=queso
+## (Es una escena para que los autoloads del juego —Brain, Save…— estén disponibles.)
 ## Imprime la transcripción y una línea RESUMEN con métricas comprobables.
 
 const SCRIPTS := {
@@ -37,7 +38,7 @@ const SCRIPTS := {
 }
 
 
-func _initialize() -> void:
+func _ready() -> void:
 	var model_path := ""
 	var client := "chucho"
 	var script_id := "queso"
@@ -45,13 +46,13 @@ func _initialize() -> void:
 		if a.begins_with("--model="): model_path = a.substr(8)
 		if a.begins_with("--client="): client = a.substr(9)
 		if a.begins_with("--script="): script_id = a.substr(9)
-	await process_frame
-	var brain = root.get_node("Brain")
+	await get_tree().process_frame
+	var brain = get_tree().root.get_node("Brain")
 	var t0 := Time.get_ticks_msec()
 	var model = await NobodyWhoModel.create(model_path, {"use_gpu": false})
 	if model == null:
 		print("ERROR: no se pudo cargar ", model_path)
-		quit(1)
+		get_tree().quit(1)
 		return
 	brain.model = model
 	brain.llm_state = "ready"
@@ -59,14 +60,14 @@ func _initialize() -> void:
 	var c := ClientDB.get_c(client)
 	print("CLIENTE: %s (%s) · presupuesto %d · guion %s" % [c["name"], c["personality"], ClientDB.budget(client, 1), script_id])
 	var s := CallSession.new()
-	root.add_child(s)
+	get_tree().root.add_child(s)
 	var lines := []
 	s.client_spoke.connect(func(t, emo, _g, src): lines.append([t, emo, src]))
 	var result := {}
 	s.ended.connect(func(r): result.merge(r))
 	s.start(client, 1, {}, {"day": 1}, 42)
 	while s.phase in ["", "preparando", "pensando"]:
-		await process_frame
+		await get_tree().process_frame
 	_report("[Suena el teléfono]", s, lines)
 	var timeouts := 0
 	var no_entiendo := 0
@@ -78,7 +79,7 @@ func _initialize() -> void:
 			timeouts += 1
 			await s.retry()
 			while s.phase == "pensando":
-				await process_frame
+				await get_tree().process_frame
 			if s.phase == "error":
 				s.continue_basic()
 		var n0 := lines.size()
@@ -89,7 +90,7 @@ func _initialize() -> void:
 		else:
 			await s.player_says(line)
 		while s.phase == "pensando":
-			await process_frame
+			await get_tree().process_frame
 		if s.phase == "error":
 			timeouts += 1
 		var reply: String = lines[-1][0] if lines.size() > n0 else "(sin respuesta: %s)" % s.last_error
@@ -115,7 +116,7 @@ func _initialize() -> void:
 	print("RESUMEN modelo=%s cliente=%s guion=%s turnos_ia=%d errores=%d no_entiendo=%d repeticiones_regeneradas=%d media=%.1f s palabras_por_respuesta=%.1f vocabulario=%d resultado=%s importe=%d" % [
 		model_path.get_file(), client, script_id, s.ai_turns, timeouts, no_entiendo, s.regenerations, avg / 1000.0,
 		float(total_words) / maxf(1.0, lines.size()), words.size(), result.get("outcome", "?"), int(result.get("amount", 0))])
-	quit()
+	get_tree().quit()
 
 
 func _report(line: String, s: CallSession, lines: Array) -> void:
