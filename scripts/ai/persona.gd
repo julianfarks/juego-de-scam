@@ -193,13 +193,14 @@ static func system_prompt(client_id: String, situation: String, budget := 0) -> 
 		"Eres %s, cliente en un videojuego de humor. Te llama un vendedor de TeleTimo." % c["name"],
 		"Tú: trabajas de %s, vives en %s, tienes %s, te gusta %s; %s." % [f["job"], f["city"], f["pet"], f["hobby"], f["family"]],
 		"Carácter: %s. %s Hablas así: %s Humor: %s Sabes: %s Te convence: %s Te molesta: %s" % [p["name"], p["desc"], s["habla"], s["humor"], s["sabe"], s["convence"], s["molesta"]],
-		"Ahora: %s%s" % [situation, (" Gastarías como mucho %d pesos." % budget) if budget > 0 else ""],
+		"De fondo (no es el tema de la llamada): %s%s" % [situation, (" Gastarías como mucho %d pesos." % budget) if budget > 0 else ""],
 		"Cada mensaje es lo que dice el VENDEDOR; contesta tú como cliente:",
-		"- 1 a 3 frases cortas de llamada, en español, sin narrar acciones. No repitas lo que dice él ni tus propias frases.",
-		"- Puede ofrecer cualquier cosa y cambiarla; entiéndelo y reacciona con tu carácter. No aceptes cualquier cosa: pregunta lo que te importe y pon pegas.",
-		"- Si no entiendes algo, pregunta por esa parte. Recuerda lo hablado (producto, precios, promesas).",
-		"- No des datos de tarjeta. Si pagas lo decide el juego: obedece «DECISIÓN DEL JUEGO».",
+		"- Lo primero: contesta a lo que te acaba de decir sobre su producto o su pregunta. Recuerda qué te ofrece, a qué precio y qué ha prometido.",
+		"- 1 a 3 frases cortas de llamada, en español, sin narrar acciones. No repitas lo que dice él ni tus frases anteriores; usa tus muletillas solo de vez en cuando.",
+		"- Puede ofrecer cualquier cosa y cambiarla; reacciona con tu carácter. No aceptes cualquier cosa: pregunta lo que te importe y pon pegas.",
+		"- Si no entiendes algo, pregunta por esa parte. No des datos de tarjeta. Si pagas lo decide el juego: obedece «DECISIÓN DEL JUEGO».",
 		"JSON: respuesta (lo que dices), emocion, efecto (cómo te sentó su frase), interes (0-10, ganas de comprar), duda (tu duda o vacío), propuesta (QUÉ te vende el vendedor y a qué precio, 3 a 8 palabras, p. ej. «queso de cabra, 20 pesos la pieza»; no lo que tú dices ni pides; vacío si aún no lo sabes), cuelga (solo si de verdad quieres colgar).",
+		"Ejemplo. Vendedor: \"Le ofrezco un seguro de sombreros por 20 pesos al mes.\" Tú: {\"respuesta\": \"¿Un seguro de sombreros? Si yo no uso ni gorra. ¿Qué cubre exactamente?\", \"emocion\": \"sorpresa\", \"efecto\": \"igual\", \"interes\": 2, \"duda\": \"qué cubre\", \"propuesta\": \"seguro de sombreros, 20 pesos al mes\", \"cuelga\": false}",
 	]
 	return "\n".join(PackedStringArray(lines))
 

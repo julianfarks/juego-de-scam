@@ -10,7 +10,8 @@ Resultados de pruebas **ejecutadas** (detalle en [docs/INFORME_PRUEBAS.md](docs/
 
 | Prueba | Resultado | Dónde |
 |---|---|---|
-| Pruebas automáticas (reglas, propuestas libres, precios, economía, transacciones, saldo, guardado, tiempos límite con una IA falsa que se cuelga, reintento, «seguir sin IA») | **320 / 320** | PC Linux |
+| Pruebas automáticas (reglas, propuestas libres, precios, economía, transacciones, saldo, guardado, tiempos límite con una IA falsa que se cuelga, reintento, «seguir sin IA», orden del JSON, muletillas, notas internas) | **330 / 330** | PC Linux |
+| Gemma sola en un procesador **ARM** (4 núcleos, CI) con el archivo real del modelo | frase del saludo lista en ≈ 26 s; luego ≈ 14 s por respuesta; 12/12 respuestas sin errores | GitHub Actions `ubuntu-24.04-arm` |
 | Partida completa con IA real: descarga en dos partes, carga y prueba de Gemma, oficina 3D, llamada libre de 10 intercambios (queso inventado → entrega → cambio de tema → broma → negociación → pregunta de memoria → cierre), voz Kokoro, Whisper, transacción, saldo, guardado | **23 / 23** | PC Linux (2 núcleos) |
 | La misma partida en Android | **24 / 24** (11 respuestas de la IA, 0 errores; ≈ 4 min por respuesta porque el emulador dibuja y calcula con el mismo procesador) | Emulador Android 12 x86_64 (GitHub Actions) |
 | Conversaciones libres con el código del juego, 8 clientes × 2 guiones, cerebro normal (Gemma 4 E2B) | 0 errores, 0 «no entiendo», 6,4–9,1 s por respuesta; cada personalidad se comporta distinto (la desconfiada pide garantías y no se deja meter prisa, el impaciente cuelga a los 6 turnos, la ingeniera literal suma los precios) y recuerdan la propuesta y el precio | CI, 4 núcleos sin GPU |
@@ -35,7 +36,9 @@ La IA nunca puede dejar la llamada «pensando» para siempre: cada respuesta tie
 - **Seguir sin IA**: el resto de la llamada usa el diálogo básico, y así se indica en cada respuesta.
 - **Ver detalle**: muestra el registro técnico.
 
-En **Ajustes → IA y voz → Diagnóstico** puedes *Comprobar archivos*, *Probar la IA* (mide el primer token y los tokens por segundo) y *Ver registro* → **Copiar**, para enviar el registro si algo va mal. El registro solo contiene tiempos, tamaños y errores, nunca lo que dices.
+En **Ajustes → IA y voz → Abrir diagnóstico de la IA** hay pruebas por separado: archivos (sin descargar nada), **Gemma sola** (sin personajes ni voz: tokens de entrada, tiempo hasta la primera palabra, velocidad, memoria), comparar hilos, voz (Kokoro), oído (Whisper) y una conversación de 10 intercambios. **Copiar informe** copia el resultado y el registro técnico, que solo contiene tiempos, tamaños y errores, nunca lo que dices.
+
+La IA usa solo los núcleos grandes del procesador (los de eficiencia la ralentizan); se puede cambiar en *Hilos de la IA*.
 
 **La GPU está desactivada por defecto.** En móviles con GPU Adreno (Snapdragon), NobodyWho descarta Vulkan y usa el backend OpenCL de llama.cpp, que con Gemma 4 puede no devolver nunca el primer token: esa era la causa de que el cliente se quedara «pensando». El procesador de un móvil actual basta. Si activas la GPU y no responde, el juego lo detecta al cargar y vuelve solo al procesador.
 
@@ -110,6 +113,7 @@ En **Ajustes → IA y voz → Diagnóstico** puedes *Comprobar archivos*, *Proba
 - **La IA es un modelo pequeño**: a veces dice algo raro o se va por las ramas. Lo importante (dinero, aceptar el pago, precios, cantidades, colgar por paciencia) lo deciden reglas fijas, no la IA.
 - **Diálogo básico**: cuando no hay IA (o eliges «Seguir sin IA»), las respuestas son de reglas y bastante más limitadas; siempre se etiquetan como «diálogo básico».
 - **GPU**: desactivada por defecto. En móviles Adreno puede bloquear la IA; si la activas y no responde, el juego vuelve solo al procesador.
+- **Actualizar el APK**: desde esta versión todos los APK se firman con la misma clave de depuración (`keystore/`), así que se instalan encima sin perder los modelos. La versión anterior usaba una clave distinta en cada compilación: para pasar a esta hay que desinstalar UNA última vez (Android lo exige) y descargar de nuevo los modelos.
 - **Solo arm64**: el APK publicado es para móviles de 64 bits ARM. El APK x86_64 de la Release «evaluaciones» es solo para el emulador.
 - **Voz del sistema**: si las voces neuronales no cargan, se usa la voz de Android, que no es generativa, y así se indica.
 

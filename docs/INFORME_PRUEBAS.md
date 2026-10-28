@@ -2,7 +2,23 @@
 
 Todas las pruebas de esta tabla se **ejecutaron** (no son revisiones de código). Fecha: 28/10/2026.
 
-## 1. Diagnóstico del bloqueo «el cliente está pensando»
+## 0. Diagnóstico del 28/10: «lleva más de un minuto pensando» en el RedMagic 9 Pro
+
+Medido con el MISMO archivo de modelo que tiene el jugador (Gemma 4 E2B Q4_K_M, 3.106.736.256 bytes, cabecera GGUF v3) y la prueba independiente `tests/eval/gemma_bench.tscn` (sin personajes, voz ni interfaz):
+
+| Hallazgo | Medición | Corrección |
+|---|---|---|
+| La frase del cliente salía **la última** del JSON: Godot ordena las claves alfabéticamente al serializar el esquema y llguidance obliga a seguir ese orden (`cuelga, duda, efecto, emocion, interes, propuesta, respuesta`). La pantalla quedaba vacía hasta terminar toda la respuesta (~100 tokens). | Salida observada: `{"cuelga": false, "duda": …}` | `JSON.stringify(schema, "", false)`; ahora sale `{"respuesta": …` primero y se ve/oye mientras sigue. |
+| En ARM (como el del móvil) la **lectura** del texto de entrada es lenta: 4,8 tokens/s por núcleo (Neoverse‑N2, CI), ~3 veces menos que x86. | 761 tokens de instrucciones: 1 hilo 170 s · 2 hilos 85 s · 4 hilos 44 s hasta la frase | Instrucciones compactas (≈ 600 tokens). Con 4 hilos en ARM la frase del saludo pasa de 44 s a ≈ 26 s; en 2 núcleos x86, de 31 s a 23 s. |
+| NobodyWho usa por defecto **todos** los núcleos (8 en el Snapdragon 8 Gen 3, incluidos 2 de eficiencia), y llama.cpp reparte el trabajo a partes iguales. | (código `core/src/cpu.rs`) | Hilos = núcleos grandes (por frecuencia máxima); ajustable y medible en el panel de diagnóstico («Comparar hilos»). |
+| Cada compilación se firmaba con una **clave nueva**: Android obligaba a desinstalar para actualizar, lo que borraba los 3 GB de modelos. | `android.yml` generaba la clave en cada ejecución | Clave de depuración fija (`keystore/`). |
+| Variante QAT Q4_0 oficial de Google (solo medida en CI, no usada) | 17,3 tokens/s de lectura frente a 18,7 de la actual en ARM | No aporta: **no** hace falta otra descarga. |
+
+Calidad con las instrucciones compactas (conversaciones de 12 turnos con el código del juego): sin errores, sin «no entiendo»; se corrigieron tres defectos que aparecieron al acortarlas (el despistado se centraba en su situación; la desconfiada abusaba de su muletilla; una nota interna «DECISIÓN DEL JUEGO» se coló en una respuesta) con un detector de muletillas, filtro de notas y un recordatorio de memoria cuando el jugador pregunta por algo anterior.
+
+**No medido en el móvil del jugador.** El panel *Ajustes → IA y voz → Abrir diagnóstico de la IA* hace esas mismas pruebas en el móvil y permite copiar el informe.
+
+## 1. Diagnóstico del bloqueo «el cliente está pensando» (27/10)
 
 | Comprobación | Resultado |
 |---|---|
@@ -15,7 +31,7 @@ Todas las pruebas de esta tabla se **ejecutaron** (no son revisiones de código)
 
 **Pendiente**: confirmarlo en el RedMagic 9 Pro.
 
-## 2. Pruebas automáticas (`tests/test_runner.tscn`) — 320 / 320
+## 2. Pruebas automáticas (`tests/test_runner.tscn`) — 330 / 330
 
 Incluyen: reglas de conversación y memoria; categorías, cantidad y precio de propuestas libres (el precio es el número pegado a «pesos», no la cantidad); negociar a la baja no es contradicción y subir el precio sí; «a domicilio» ya no se confunde con pedir el pago; economía (sin precio no se cobra, presupuesto, importe = precio × cantidad, comisión); transacciones, movimientos del saldo, gastos y guardado; migración del guardado v2 → v3; **IA falsa que nunca responde** (la llamada pasa a «error» sin inventar respuestas), atasco a mitad de respuesta, Cancelar, Reintentar, «Seguir sin IA», propuesta que cambia a mitad de llamada; límites de tiempo adaptados a la velocidad.
 

@@ -48,6 +48,7 @@ func _run_all() -> void:
 	test_transactions_and_balance()
 	await test_timeouts_never_hang()
 	test_schema_order()
+	test_reply_hygiene()
 	test_adaptive_limits()
 	await test_ai_call_with_fake_engine()
 	test_game_state_day_cycle()
@@ -675,6 +676,27 @@ func test_schema_order() -> void:
 	var txt := JSON.stringify(Persona.schema(), "", false)
 	check(txt.find("respuesta") < txt.find("cuelga") and txt.find("respuesta") < txt.find("duda"), "«respuesta» va la PRIMERA en el esquema (la frase se ve y se oye mientras la IA sigue)")
 	check(JSON.stringify(Persona.schema()).find("respuesta") > JSON.stringify(Persona.schema()).find("cuelga"), "(comprobación: con el orden alfabético por defecto iría al final)")
+
+
+func test_reply_hygiene() -> void:
+	section("Higiene de las respuestas de la IA")
+	var s := CallSession.new()
+	s.st = _new_state("remedios")
+	check(s._parse(_reply("DECISIÓN DEL JUEGO"))["ok"] == false, "una respuesta que solo repite la nota interna no vale")
+	check(s._parse(_reply("Vale, pero por escrito. [Nota del juego: aceptas]"))["dice"] == "Vale, pero por escrito.", "se quitan notas internas coladas")
+	s.st.client_lines = ["¿Jardinería? ¿Y eso dónde lo pone?", "Flores. ¿Y eso dónde lo pone?"]
+	check(s._is_repeat("¿Tres botes? ¿Y eso dónde lo pone?"), "detecta una muletilla gastada (para regenerar)")
+	check(not s._is_repeat("¿Tres botes? ¿Y por qué tan barato?"), "una frase nueva no se regenera")
+	# La memoria se adjunta cuando el jugador pregunta por algo anterior
+	s.st.history = []
+	s.st.turn = 7
+	s.st.set_proposal("Servicio de jardinería")
+	s.st.add_history("player", "Le ofrezco hierbas medicinales")
+	s.st.set_proposal("Hierbas medicinales para dormir")
+	s.st.add_history("player", "¿Se acuerda de lo primero que le ofrecí?")
+	var notes := s._notes_for({"events": [], "hangup": ""})
+	check(str(notes).contains("lo primero que te ofreció fue: Servicio de jardinería"), "pregunta de memoria → el juego le recuerda lo hablado (%s)" % str(notes))
+	s.free()
 
 
 func test_adaptive_limits() -> void:

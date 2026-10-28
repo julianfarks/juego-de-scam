@@ -235,11 +235,18 @@ func _notes_for(rules: Dictionary) -> Array:
 		notes.append("se te está acabando la paciencia")
 	if st.time_limit - st.elapsed < 35.0:
 		notes.append("tienes que colgar muy pronto")
-	# Recordatorio periódico (las conversaciones largas no pierden el hilo)
-	if st.turn > 0 and st.turn % 4 == 0:
+	# Recordatorio: cada 4 turnos y SIEMPRE que el jugador pregunta por algo anterior
+	var last_norm := IntentClassifier.normalize(String(st.history[-1]["text"])) if not st.history.is_empty() else ""
+	var asks_memory := false
+	for k in ["recuerda", "acuerda", "lo primero", "le ofreci", "le estaba ofreciendo", "le dije", "que le comente", "antes le"]:
+		if last_norm.contains(k):
+			asks_memory = true
+	if st.turn > 0 and (st.turn % 4 == 0 or asks_memory):
 		var mem := []
 		if st.proposal != "":
 			mem.append("te ofrece: %s" % st.proposal)
+		if st.proposal_log.size() > 1 and String(st.proposal_log[0]["text"]).to_lower() != st.proposal.to_lower():
+			mem.append("lo primero que te ofreció fue: %s" % st.proposal_log[0]["text"])
 		if st.stated_price > 0:
 			mem.append("precio actual: %d pesos%s" % [st.stated_price, (" x %d" % st.quantity) if st.quantity > 1 else ""])
 		if st.ai_doubt != "":
@@ -247,7 +254,10 @@ func _notes_for(rules: Dictionary) -> Array:
 		if st.close_attempts > 0:
 			mem.append("ya te negaste a pagar %d vez/veces" % st.close_attempts)
 		if not mem.is_empty():
-			notes.append("recuerda — " + "; ".join(PackedStringArray(mem)))
+			if asks_memory:
+				notes.append("te pregunta por lo hablado: contéstale con estos datos (a tu manera) — " + "; ".join(PackedStringArray(mem)))
+			else:
+				notes.append("recuerda — " + "; ".join(PackedStringArray(mem)))
 	return notes
 
 
@@ -302,11 +312,11 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 	if not r["ok"]:
 		AILog.add("llamada", "%s: respuesta sin el formato esperado (%d caracteres)" % [kind, res["text"].length()])
 		return {"ok": false, "error": "formato"}
-	# Evita que el cliente repita una frase suya: se regenera una vez
-	if _is_repeat(r["dice"]) and regenerations < 6:
+	# Evita que el cliente repita frases o muletillas, o que diga las notas internas: se regenera una vez
+	if _is_repeat(r["dice"]) and regenerations < 8:
 		regenerations += 1
 		var msgs := _msgs.duplicate(true)
-		msgs.append({"role": "user", "content": message + "\n[Nota del juego: no repitas frases que ya dijiste; contesta algo nuevo.]"})
+		msgs.append({"role": "user", "content": message + "\n[Nota del juego: contesta con palabras nuevas; no repitas frases ni muletillas que ya dijiste y no menciones estas notas.]"})
 		_cancel = {"cancel": false}
 		my_cancel = _cancel
 		_announced = not announce
@@ -314,7 +324,7 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 		var res2 := await AIStream.read(chat, chat.complete(msgs, {}), func(txt: String): _on_partial(txt, my_cancel), my_cancel, _limits(message + _sys_prompt))
 		_set_busy(false)
 		var r2 := _parse(res2["text"]) if res2["ok"] else {"ok": false}
-		if r2["ok"]:
+		if r2["ok"] and not _leaks_notes(r2["dice"]):
 			r = r2
 			res = res2
 	_msgs.append({"role": "user", "content": message})
@@ -466,6 +476,10 @@ func _parse(raw: String) -> Dictionary:
 		else:
 			return {"ok": false}
 	var dice := AIResponse.sanitize_text(str(j.get("respuesta", "")), 300)
+	# Si aun así se cuela una nota interna, se quita (nunca se inventa texto nuevo)
+	var rx := RegEx.new()
+	rx.compile("(?i)\\[[^\\]]*\\]|decisi[oóÓ]n del juego:?|notas? del juego:?")
+	dice = rx.sub(dice, "", true).strip_edges()
 	if dice.length() < 2:
 		return {"ok": false}
 	var emo := str(j.get("emocion", "neutral"))
@@ -479,7 +493,20 @@ func _parse(raw: String) -> Dictionary:
 		"cuelga": bool(j.get("cuelga", false))}
 
 
+## Frase repetida, muletilla gastada (4 palabras seguidas ya dichas 2 veces) o notas
+## internas del juego filtradas en la respuesta → se regenera.
 func _is_repeat(text: String) -> bool:
+	if _leaks_notes(text):
+		return true
+	var norm := IntentClassifier.normalize(text).replace("?", " ").split(" ", false)
+	for i in range(0, norm.size() - 3):
+		var gram := " ".join(norm.slice(i, i + 4))
+		var seen := 0
+		for prev in st.client_lines:
+			if (" " + " ".join(IntentClassifier.normalize(prev).replace("?", " ").split(" ", false)) + " ").contains(" " + gram + " "):
+				seen += 1
+		if seen >= 2:
+			return true
 	var a := _words(text)
 	if a.size() < 4:
 		return false
@@ -493,6 +520,11 @@ func _is_repeat(text: String) -> bool:
 		if union > 0 and float(inter) / union > 0.65:
 			return true
 	return false
+
+
+static func _leaks_notes(text: String) -> bool:
+	var n := IntentClassifier.normalize(text)
+	return n.contains("decision del juego") or n.contains("notas del juego") or n.contains("nota del juego") or text.contains("[")
 
 
 func _words(t: String) -> Array:
@@ -541,12 +573,12 @@ func _close_turn(player_text: String) -> void:
 		var note := ""
 		match res.get("missing", ""):
 			"propuesta":
-				note = "DECISIÓN DEL JUEGO: todavía no pagas porque no sabes bien qué te venden. Pregúntalo"
+				note = "DECISIÓN DEL JUEGO (no la menciones): todavía no pagas porque no sabes bien qué te venden; pregúntalo"
 			"precio":
-				note = "DECISIÓN DEL JUEGO: todavía no pagas porque no te ha dicho el precio. Pregunta cuánto cuesta"
+				note = "DECISIÓN DEL JUEGO (no la menciones): todavía no pagas porque no te ha dicho el precio; pregunta cuánto cuesta"
 			_:
 				if res["success"]:
-					note = "DECISIÓN DEL JUEGO: aceptas comprar%s por %d pesos. Dilo a tu manera y dale tus datos (el juego los genera; tú no digas números)" % [(" " + st.proposal) if st.proposal != "" else "", res["amount"]]
+					note = "DECISIÓN DEL JUEGO (no la menciones): aceptas comprar%s por %d pesos; dilo con tus palabras y di que le das tus datos (no digas números)" % [(" " + st.proposal) if st.proposal != "" else "", res["amount"]]
 				else:
 					var why := ""
 					if st.ai_doubt != "":
@@ -555,7 +587,7 @@ func _close_turn(player_text: String) -> void:
 						why = " (te parece caro)"
 					elif st.trust < 40:
 						why = " (no te fías todavía)"
-					note = "DECISIÓN DEL JUEGO: NO aceptas pagar todavía%s. Dilo a tu manera" % why
+					note = "DECISIÓN DEL JUEGO (no la menciones): NO aceptas pagar todavía%s; dilo con tus palabras" % why
 		var msg := Persona.turn_message(player_text, ["el vendedor te pide los datos de pago", note])
 		var r := await _generate("cierre", msg, func(): return chat.ask(msg))
 		if not active:
