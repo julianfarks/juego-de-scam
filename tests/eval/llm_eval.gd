@@ -37,7 +37,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 	print("Modelo %s cargado en %d ms" % [model_path.get_file(), Time.get_ticks_msec() - t0])
-	var sampler = NobodyWhoSamplerBuilder.new().json_schema(JSON.stringify(Persona.schema())).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(0.8).top_p(0.92, 1).dist()
+	var sampler = NobodyWhoSamplerBuilder.new().json_schema(JSON.stringify(Persona.schema(), "", false)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(0.8).top_p(0.92, 1).dist()
 	var sys := Persona.system_prompt(client, Persona.SITUATIONS[3])
 	var chat = await NobodyWhoChat.create(model, {"system_prompt": sys, "n_ctx": 4096, "sampler": sampler, "template_variables": {"enable_thinking": false}})
 	var c := ClientDB.get_c(client)

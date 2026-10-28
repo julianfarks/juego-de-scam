@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 export_credentials.cfg
 *.keystore
+!keystore/teletimo-debug.keystore
 
 # Binarios de NobodyWho (>100 MB): los descarga tools/fetch_nobodywho.sh y el CI
 addons/nobodywho/*.so

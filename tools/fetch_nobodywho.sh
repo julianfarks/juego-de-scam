@@ -9,6 +9,7 @@ TMP=$(mktemp -d)
 curl -fsSL -o "$TMP/nw.zip" "$URL"
 case "${1:-all}" in
   linux) PAT="*x86_64-unknown-linux-gnu*" ;;
+  linux-arm64) PAT="*aarch64-unknown-linux-gnu*" ;;
   android) PAT="*linux-android*" ;;
   *) PAT="*linux-android* *x86_64-unknown-linux-gnu*" ;;
 esac

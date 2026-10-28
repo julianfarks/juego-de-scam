@@ -45,6 +45,7 @@ var gpu_used := false
 var load_ms := 0
 var turns_total := 0
 # Velocidad medida en ESTE dispositivo (para ajustar los límites de tiempo):
+var n_threads := 0          # hilos usados por la IA (0 = automático de NobodyWho)
 var prompt_tps := 40.0   # tokens de entrada por segundo (lectura del contexto)
 var gen_tps := 8.0       # tokens generados por segundo
 var turn_ms_total := 0
@@ -63,7 +64,8 @@ func _ready() -> void:
 	llm_pack = choose_llm_pack()
 	_refresh_presence()
 	Settings.changed.connect(_on_setting)
-	AILog.add("inicio", "%s %s · %d núcleos · RAM %.1f GB · cerebro %s · GPU %s" % [OS.get_name(), OS.get_model_name(), OS.get_processor_count(), total_ram_bytes() / 1073741824.0, llm_pack, "activada" if Settings.get_value("ai_gpu") else "desactivada"])
+	var topo := GemmaBench.cpu_topology()
+	AILog.add("inicio", "%s %s · %d núcleos (frecuencias máx. %s MHz; grandes: %d) · RAM %.1f GB, libre %.0f MB · cerebro %s · GPU %s · hilos IA %d" % [OS.get_name(), OS.get_model_name(), OS.get_processor_count(), str(topo["freqs_mhz"]), topo["big"], total_ram_bytes() / 1073741824.0, GemmaBench.mem_available_mb(), llm_pack, "activada" if Settings.get_value("ai_gpu") else "desactivada", threads()])
 	for r in verify_packs():
 		AILog.add("archivos", "%s: %s" % [r["label"], r["detail"]])
 
@@ -576,16 +578,37 @@ func new_vad() -> Object:
 
 
 ## Nueva conversación con el modelo compartido.
+## Hilos para la IA: el ajuste del jugador o, en automático, los núcleos grandes.
+func threads() -> int:
+	if n_threads > 0:
+		return n_threads
+	var forced := int(Settings.get_value("ai_threads"))
+	return forced if forced > 0 else GemmaBench.recommended_threads()
+
+
+## Muestreador del juego: salida JSON forzada por gramática (llguidance), penalización
+## de repeticiones (DRY), temperatura y top-p.
+static func make_sampler(schema: Dictionary, temperature := 0.8) -> Object:
+	# sort_keys = false: Godot ordena las claves alfabéticamente por defecto y llguidance
+	# obliga al modelo a seguir ese orden, con lo que «respuesta» salía LA ÚLTIMA y el
+	# jugador no veía ni oía nada hasta que la IA terminaba todo el JSON.
+	return ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(JSON.stringify(schema, "", false)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(temperature).top_p(0.92, 1).dist()
+
+
 func new_chat(system_prompt: String, schema: Dictionary, temperature := 0.8) -> Object:
 	if llm_state != "ready" or model == null:
 		return null
-	var sampler = ClassDB.instantiate("NobodyWhoSamplerBuilder").json_schema(JSON.stringify(schema)).dry(0.8, 1.75, 2, 256, PackedStringArray(["\n", ":", "\"", "*"])).temperature(temperature).top_p(0.92, 1).dist()
+	var sampler = make_sampler(schema, temperature)
 	var m := model
-	var r := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoChat", "create", m, {
+	var cfg := {
 		"system_prompt": system_prompt, "n_ctx": 4096, "sampler": sampler,
 		"template_variables": {"enable_thinking": false},
 		"context_shift": {"keep_first_turns": 1, "keep_last_turns": 6, "target": 0.6},
-	}), 30000)
+	}
+	var nt := threads()
+	if nt > 0:
+		cfg["n_threads"] = nt
+	var r := await Timed.run(func(): return await ClassDB.class_call_static("NobodyWhoChat", "create", m, cfg), 30000)
 	if not r["ok"] or r["value"] == null:
 		AILog.add("error", "No se pudo crear la conversación%s" % (" (tiempo agotado)" if r["timeout"] else ""))
 		return null

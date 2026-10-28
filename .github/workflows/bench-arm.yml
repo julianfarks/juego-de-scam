@@ -1,0 +1,55 @@
+name: Prueba de Gemma en procesador ARM
+
+# Mide Gemma 4 E2B (el mismo archivo que descarga el juego) en un procesador ARM64
+# (como el de los móviles) con distintos números de hilos, y prueba una conversación
+# de más de diez intercambios con el código del juego.
+on:
+  push:
+    paths: ["tests/eval/gemma_bench*", "scripts/ai/gemma_bench.gd", ".github/workflows/bench-arm.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Godot 4.6.2 (arm64) + NobodyWho (aarch64)
+        run: |
+          curl -fsSL -o g.zip https://github.com/godotengine/godot/releases/download/4.6.2-stable/Godot_v4.6.2-stable_linux.arm64.zip
+          unzip -q g.zip && sudo mv Godot_v4.6.2-stable_linux.arm64 /usr/local/bin/godot
+          tools/fetch_nobodywho.sh linux-arm64
+      - name: Modelo (el mismo que descarga el juego, desde la Release «modelos»)
+        run: |
+          mkdir -p models_local && cd models_local && touch .gdignore
+          B=https://github.com/julianfarks/juego-de-scam/releases/download/modelos
+          curl -fsSL -o p1 $B/gemma4-e2b-q4km.gguf.001
+          curl -fsSL -o p2 $B/gemma4-e2b-q4km.gguf.002
+          cat p1 p2 > gemma4-e2b.gguf && rm p1 p2
+          ls -la; head -c 4 gemma4-e2b.gguf; echo
+      - name: Importar
+        run: godot --headless --path . --import || true
+      - name: Prueba independiente de Gemma
+        run: |
+          mkdir -p bench_out
+          lscpu > bench_out/cpu.txt; free -m >> bench_out/cpu.txt
+          timeout 3000 godot --headless --path . tests/eval/gemma_bench.tscn -- --model=$PWD/models_local/gemma4-e2b.gguf --threads=1,2,4 2>&1 | tee bench_out/gemma_bench.txt | grep BENCH
+      - name: Conversación de 12 intercambios (código del juego, 4 hilos)
+        run: |
+          for pair in tomasito:queso remedios:jardin; do
+            c=${pair%%:*}; s=${pair##*:}
+            timeout 2400 godot --headless --path . tests/eval/call_eval.tscn -- --model=$PWD/models_local/gemma4-e2b.gguf --client=$c --script=$s --threads=4 2>&1 \
+              | grep -E "^>|^<|^   \[|CLIENTE|Modelo|RESUMEN|MEMORIA|PROPUESTA FINAL|ERROR" > bench_out/conversacion-$c-$s.txt
+            grep RESUMEN bench_out/conversacion-$c-$s.txt
+          done
+      - name: Publicar resultados
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view evaluaciones >/dev/null 2>&1 || gh release create evaluaciones --title "Evaluaciones de la IA (CI)" --notes "Resultados de pruebas automáticas." --prerelease
+          tar czf bench-arm-ultima.tgz bench_out
+          gh release upload evaluaciones bench-arm-ultima.tgz --clobber

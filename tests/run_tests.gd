@@ -47,6 +47,7 @@ func _run_all() -> void:
 	test_economy_free_prices()
 	test_transactions_and_balance()
 	await test_timeouts_never_hang()
+	test_schema_order()
 	test_adaptive_limits()
 	await test_ai_call_with_fake_engine()
 	test_game_state_day_cycle()
@@ -667,6 +668,13 @@ func test_timeouts_never_hang() -> void:
 		await get_tree().process_frame
 	var d: Dictionary = box["d"] if box["d"] != null else {"error": ""}
 	check(d["error"] == "cancelado" and Time.get_ticks_msec() - t1 < 2000, "Cancelar corta la espera al momento")
+
+
+func test_schema_order() -> void:
+	section("Orden del JSON de la IA")
+	var txt := JSON.stringify(Persona.schema(), "", false)
+	check(txt.find("respuesta") < txt.find("cuelga") and txt.find("respuesta") < txt.find("duda"), "«respuesta» va la PRIMERA en el esquema (la frase se ve y se oye mientras la IA sigue)")
+	check(JSON.stringify(Persona.schema()).find("respuesta") > JSON.stringify(Persona.schema()).find("cuelga"), "(comprobación: con el orden alfabético por defecto iría al final)")
 
 
 func test_adaptive_limits() -> void:

@@ -47,10 +47,16 @@ jobs:
       - name: Bibliotecas de IA local (NobodyWho)
         run: tools/fetch_nobodywho.sh all
 
-      - name: Keystore de depuración (generado en el runner, no se guarda en el repo)
+      - name: Keystore de depuración FIJO (para que cada APK se instale encima del anterior)
+        env:
+          KS_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
         run: |
-          keytool -genkey -v -keystore "$HOME/debug.keystore" -storepass android -alias androiddebugkey \
-            -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          # Antes se generaba una clave nueva en cada compilación: Android rechazaba la
+          # actualización y había que desinstalar el juego, lo que borraba los modelos de IA.
+          # Se usa siempre la misma clave de DEPURACIÓN (no sirve para publicar en tiendas).
+          if [ -n "$KS_B64" ]; then echo "$KS_B64" | base64 -d > "$HOME/debug.keystore"; echo "Clave: secreto del repositorio"
+          else cp keystore/teletimo-debug.keystore "$HOME/debug.keystore"; echo "Clave: keystore/teletimo-debug.keystore"; fi
+          keytool -list -keystore "$HOME/debug.keystore" -storepass android | grep -i "SHA-256\|SHA256" || true
 
       - name: Configurar Godot para Android
         run: |

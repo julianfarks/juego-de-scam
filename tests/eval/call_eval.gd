@@ -46,6 +46,7 @@ func _ready() -> void:
 		if a.begins_with("--model="): model_path = a.substr(8)
 		if a.begins_with("--client="): client = a.substr(9)
 		if a.begins_with("--script="): script_id = a.substr(9)
+		if a.begins_with("--threads="): get_tree().root.get_node("Brain").n_threads = int(a.substr(10))
 	await get_tree().process_frame
 	var brain = get_tree().root.get_node("Brain")
 	var t0 := Time.get_ticks_msec()

@@ -26,6 +26,9 @@ const DEFAULTS := {
 	# llama.cpp, que con Gemma 4 puede no devolver nunca el primer token (el cliente
 	# se quedaba «pensando»). El procesador de un móvil actual es suficiente.
 	"ai_gpu": false,
+	# Hilos de la IA: 0 = automático (solo los núcleos grandes del procesador; los de
+	# eficiencia ralentizan a llama.cpp). NobodyWho por defecto usa TODOS los núcleos.
+	"ai_threads": 0,
 	"gpu_probe": false,      # marca interna: si queda a true, la carga con GPU falló
 	"ai_enabled": true,
 	"ai_setup_seen": false,
