@@ -20,7 +20,8 @@ const PACKS := {
 	"llm_normal": {"file": "gemma4-e2b-q4km.gguf", "size": 3106736256, "label": "Cerebro de los clientes (Gemma 4 E2B)",
 		"parts": [1600000000, 1506736256],
 		"hf": "https://huggingface.co/NobodyWho/Google_Gemma4-E2B-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf"},
-	# Para móviles con poca memoria. Responde peor (más corto y menos ingenioso).
+	# Para móviles con poca memoria (no pueden con Gemma). En las pruebas conversa con
+	# poca coherencia; la interfaz lo dice claramente.
 	"llm_ligero": {"file": "qwen3.5-0.8b-q4km.gguf", "size": 532517344, "label": "Cerebro ligero (Qwen3.5 0.8B)",
 		"hf": "https://huggingface.co/NobodyWho/Qwen_Qwen3.5-0.8B-GGUF/resolve/main/Qwen_Qwen3.5-0.8B-Q4_K_M-vendor-sampling.gguf"},
 	"stt": {"file": "whisper-base.zip", "size": 144862025, "label": "Oído (Whisper)", "dir": "whisper"},
@@ -203,6 +204,8 @@ func is_ready() -> bool:
 func status_text() -> String:
 	match llm_state:
 		"ready":
+			if llm_pack == "llm_ligero":
+				return "IA local activa (cerebro ligero: conversación poco coherente)"
 			return "IA local activa (%s)" % PACKS[llm_pack]["label"].get_slice("(", 1).trim_suffix(")")
 		"loading":
 			return "Cargando la IA local…"

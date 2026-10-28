@@ -6,7 +6,17 @@
 
 ## Estado
 
-<!--ESTADO-->
+Resultados de pruebas **ejecutadas** (detalle en [docs/INFORME_PRUEBAS.md](docs/INFORME_PRUEBAS.md)):
+
+| Prueba | Resultado | Dónde |
+|---|---|---|
+| Pruebas automáticas (reglas, propuestas libres, precios, economía, transacciones, saldo, guardado, tiempos límite con una IA falsa que se cuelga, reintento, «seguir sin IA») | **320 / 320** | PC Linux |
+| Partida completa con IA real: descarga en dos partes, carga y prueba de Gemma, oficina 3D, llamada libre de 10 intercambios (queso inventado → entrega → cambio de tema → broma → negociación → pregunta de memoria → cierre), voz Kokoro, Whisper, transacción, saldo, guardado | **23 / 23** | PC Linux (2 núcleos) |
+| La misma partida en Android | **24 / 24** (11 respuestas de la IA, 0 errores; ≈ 4 min por respuesta porque el emulador dibuja y calcula con el mismo procesador) | Emulador Android 12 x86_64 (GitHub Actions) |
+| Conversaciones libres con el código del juego, 8 clientes × 2 guiones, cerebro normal (Gemma 4 E2B) | 0 errores, 0 «no entiendo», 6,4–9,1 s por respuesta; cada personalidad se comporta distinto (la desconfiada pide garantías y no se deja meter prisa, el impaciente cuelga a los 6 turnos, la ingeniera literal suma los precios) y recuerdan la propuesta y el precio | CI, 4 núcleos sin GPU |
+
+**No se ha probado en un móvil físico.** La versión anterior se quedaba «pensando» en un RedMagic 9 Pro (Snapdragon 8 Gen 3); la causa más probable (GPU Adreno con el backend OpenCL) y el fallo del juego (esperar sin límite) están corregidos, pero falta confirmarlo en ese móvil. Si vuelve a fallar, *Ajustes → IA y voz → Diagnóstico → Ver registro → Copiar* da el registro técnico para saber exactamente qué pasa.
+
 
 ## Cómo se juega (sin configurar nada)
 
@@ -93,13 +103,15 @@ En **Ajustes → IA y voz → Diagnóstico** puedes *Comprobar archivos*, *Proba
 
 ## Limitaciones conocidas
 
-- **Sin prueba en un móvil físico**: no se ha medido la velocidad real de la IA ni probado el micrófono real (en el emulador la voz se comprobó sintetizando una frase con Kokoro y pasándola a Whisper).
-- **Descarga grande la primera vez**: 3,3 GB con el cerebro normal (1,1 GB con el ligero). Sin descargarla, el juego funciona con diálogo básico por reglas y lo indica en pantalla.
-- **Móviles con menos de 6 GB de RAM**: usan el cerebro ligero, que conversa bastante peor.
-- **La IA es un modelo pequeño**: a veces contesta con frases algo raras o se va por las ramas. Lo importante (dinero, venta, colgar, memoria de precios) lo controla el código, no la IA.
-- **Tiempo límite por respuesta**: 150 s. Si la IA no termina, contesta el diálogo básico y se avisa en el chat («La IA no respondió a tiempo»).
-- **Solo arm64**: el APK publicado es para móviles de 64 bits ARM (casi todos los actuales). El APK x86_64 de la Release «evaluaciones» es solo para el emulador.
-- **Voz del sistema**: si las voces neuronales no se pueden cargar, se usa la voz de Android, que no es generativa y así se indica en Ajustes.
+- **Sin prueba en un móvil físico**: ni la velocidad real de la IA en un teléfono ni el micrófono real están comprobados (en el emulador, la voz se probó sintetizando una frase con Kokoro y pasándola a Whisper).
+- **Velocidad**: en un procesador de 4 núcleos sin gráficos, Gemma tarda 6–9 s por respuesta; en un móvil depende del procesador. Los límites de tiempo se ajustan a la velocidad medida en cada dispositivo (mínimo 60 s para el primer token, máximo 7 min), así que un móvil lento no se confunde con un bloqueo, pero la espera puede ser larga.
+- **Descarga grande la primera vez**: 3,3 GB con el cerebro normal. Sin descargarla, el juego funciona con diálogo básico por reglas y lo indica en pantalla.
+- **Móviles con menos de 5 GB de RAM**: no pueden con Gemma y usan el cerebro ligero (Qwen3.5 0.8B), que en las pruebas **conversa con poca coherencia**. El juego lo avisa.
+- **La IA es un modelo pequeño**: a veces dice algo raro o se va por las ramas. Lo importante (dinero, aceptar el pago, precios, cantidades, colgar por paciencia) lo deciden reglas fijas, no la IA.
+- **Diálogo básico**: cuando no hay IA (o eliges «Seguir sin IA»), las respuestas son de reglas y bastante más limitadas; siempre se etiquetan como «diálogo básico».
+- **GPU**: desactivada por defecto. En móviles Adreno puede bloquear la IA; si la activas y no responde, el juego vuelve solo al procesador.
+- **Solo arm64**: el APK publicado es para móviles de 64 bits ARM. El APK x86_64 de la Release «evaluaciones» es solo para el emulador.
+- **Voz del sistema**: si las voces neuronales no cargan, se usa la voz de Android, que no es generativa, y así se indica.
 
 
 ## Créditos

@@ -30,3 +30,12 @@ Se evaluaron varios modelos con la misma conversación larga en español (presen
 | Qwen3.5 4B | 21–22,5 s | 0 | Coherente, pero el triple de lento que Gemma. |
 
 En un móvil el tiempo depende mucho del procesador: un móvil de gama alta suele igualar o superar a ese procesador de CI, uno de gama baja puede tardar varias veces más. **No se ha medido en un móvil real.**
+
+### Conversaciones libres con el código del juego (CI, 4 núcleos, 8 clientes × 2 guiones)
+
+| Cerebro | Errores | «No entiendo» | Tiempo por respuesta | Calidad observada |
+|---|---|---|---|---|
+| **Gemma 4 E2B** (normal) | 0 de 8 conversaciones | 0 | 6,4–9,1 s | Coherente y en personaje; recuerda la propuesta, los cambios de producto y el precio negociado; cada personalidad reacciona distinto. |
+| Qwen3.5 0.8B (ligero) | 1 conversación sin IA | 0 | 4,6–9,6 s | Poco coherente («¿Lo lleva al médico o al médico a quién?»). Solo para móviles que no pueden con Gemma. |
+
+Transcripciones completas: Release «evaluaciones», archivo `eval-ultima.tgz`.

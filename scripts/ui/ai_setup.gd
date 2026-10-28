@@ -23,7 +23,7 @@ func open() -> void:
 	var box: VBoxContainer = md["box"]
 	box.add_child(UIKit.label("Despertando a los clientes", 34, UIKit.C_ACCENT))
 	var gb := Brain.missing_bytes() / 1073741824.0
-	info = UIKit.label("En TeleTimo los clientes piensan, te escuchan y te hablan con una IA que funciona dentro de tu móvil, sin Internet y sin cuentas.\n\nPara eso, la primera vez hay que descargar sus modelos: %.1f GB (cerebro, oído y voces). Te recomendamos usar Wi‑Fi. Después ya no hace falta conexión." % gb, 22)
+	info = UIKit.label("En TeleTimo los clientes piensan, te escuchan y te hablan con una IA que funciona dentro de tu móvil, sin Internet y sin cuentas.\n\nPara eso, la primera vez hay que descargar sus modelos: %.1f GB (cerebro, oído y voces). Te recomendamos usar Wi‑Fi. Después ya no hace falta conexión." % gb + ("\n\nTu móvil tiene menos de 5 GB de RAM: se usará el cerebro ligero, que conversa con mucha menos coherencia." if Brain.llm_pack == "llm_ligero" else ""), 22)
 	box.add_child(info)
 	bar = UIKit.bar(0, 100, UIKit.C_GOOD, 26)
 	bar.visible = false

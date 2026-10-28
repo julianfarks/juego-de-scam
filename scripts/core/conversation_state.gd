@@ -167,6 +167,9 @@ func set_proposal(text: String) -> bool:
 	var t := Proposal.clean_label(text)
 	if t.length() < 3 or t.to_lower() == proposal.to_lower() or Proposal.is_action_label(t):
 		return false
+	var seller := history.filter(func(h): return h["who"] == "player").map(func(h): return h["text"])
+	if not seller.is_empty() and not Proposal.overlaps_seller(t, seller):
+		return false
 	proposal = t
 	proposal_log.append({"turn": turn, "text": t})
 	offer_explained = true

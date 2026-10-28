@@ -98,7 +98,23 @@ static func price_from(text: String) -> int:
 
 ## Palabras que indican que la IA ha descrito una ACCIÓN y no el producto
 ## («Confirmar el pago»); en ese caso se conserva la propuesta anterior.
-const ACTION_WORDS := ["confirmar", "pagar", "comprar", "aceptar", "recibir", "preparar", "enviar", "cerrar", "dar", "facilitar", "completar", "finalizar", "terminar"]
+const ACTION_WORDS := ["confirmar", "pagar", "comprar", "aceptar", "recibir", "preparar", "enviar", "cerrar", "dar", "facilitar", "completar", "finalizar", "terminar",
+	# descripciones de la conversación, no de un producto
+	"informacion", "esperando", "esperar", "recordar", "recuerdo", "despedida", "despedirse", "colgar", "nada", "nadalgo", "ninguna", "ninguno", "nadie", "pregunta", "preguntar", "saber", "conocer", "duda", "llamada", "saludo", "saludar", "vendedor"]
+
+
+## ¿La etiqueta comparte alguna palabra con lo que dijo el vendedor? (para que no se
+## registre como «propuesta» algo que el jugador nunca ofreció)
+static func overlaps_seller(label: String, seller_texts: Array) -> bool:
+	var said := {}
+	for t in seller_texts:
+		for w in IntentClassifier.normalize(String(t)).replace("?", " ").split(" ", false):
+			if w.length() >= 4:
+				said[w.substr(0, 5)] = true
+	for w in IntentClassifier.normalize(label).replace("?", " ").split(" ", false):
+		if w.length() >= 4 and said.has(w.substr(0, 5)):
+			return true
+	return false
 
 
 static func is_action_label(text: String) -> bool:

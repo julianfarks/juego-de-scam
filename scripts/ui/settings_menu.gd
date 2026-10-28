@@ -177,7 +177,7 @@ func _tab_voice() -> void:
 	dl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(dl)
 	h.add_child(UIKit.button("Pausar", func() -> void: Brain.cancel_download(), UIKit.C_PANEL2, 60, 22))
-	_option_row(p, "Tamaño del cerebro", "llm_size", ["auto", "normal", "ligero"], ["Automático según la memoria", "Normal: Gemma 4 E2B (mejor conversación, 3,1 GB, 6 GB de RAM)", "Ligero: Qwen3.5 0.8B (peor conversación, 0,5 GB)"])
+	_option_row(p, "Tamaño del cerebro", "llm_size", ["auto", "normal", "ligero"], ["Automático según la memoria", "Normal: Gemma 4 E2B (mejor conversación, 3,1 GB, 6 GB de RAM)", "Ligero: Qwen3.5 0.8B (0,5 GB) — conversa con poca coherencia; solo para móviles con menos de 5 GB de RAM"])
 	_check_row(p, "Usar la GPU para la conversación (EXPERIMENTAL: en muchos móviles Snapdragon/Adreno bloquea la IA; si la activas y falla, el juego vuelve solo al procesador)", "ai_gpu")
 	_option_row(p, Loc.t("tts_engine"), "tts_mode", ["ia", "system", "off"], ["Voces neuronales (IA en el móvil)", "Voz del sistema Android", "Sin voz (solo subtítulos)"])
 	_check_row(p, "Terminar de escuchar al detectar silencio", "vad_auto_stop")
