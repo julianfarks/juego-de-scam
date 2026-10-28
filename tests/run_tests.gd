@@ -47,6 +47,7 @@ func _run_all() -> void:
 	test_economy_free_prices()
 	test_transactions_and_balance()
 	await test_timeouts_never_hang()
+	test_adaptive_limits()
 	await test_ai_call_with_fake_engine()
 	test_game_state_day_cycle()
 	test_upgrades()
@@ -661,6 +662,26 @@ func test_timeouts_never_hang() -> void:
 		await get_tree().process_frame
 	var d: Dictionary = box["d"] if box["d"] != null else {"error": ""}
 	check(d["error"] == "cancelado" and Time.get_ticks_msec() - t1 < 2000, "Cancelar corta la espera al momento")
+
+
+func test_adaptive_limits() -> void:
+	section("Límites de tiempo adaptados a la velocidad del dispositivo")
+	var brain := get_tree().root.get_node("Brain")
+	var old_p: float = brain.prompt_tps
+	var old_g: float = brain.gen_tps
+	brain.prompt_tps = 200.0
+	brain.gen_tps = 20.0
+	var fast: Dictionary = brain.limits_for(3500)
+	check(fast["first"] == 60000, "móvil rápido: 60 s para el primer token")
+	brain.prompt_tps = 5.0
+	brain.gen_tps = 1.4
+	var slow: Dictionary = brain.limits_for(3500)
+	check(slow["first"] > 300000 and slow["first"] <= 420000, "dispositivo lento: más margen, pero con tope (%d s)" % (slow["first"] / 1000))
+	check(slow["total"] > slow["first"] and slow["stall"] == 25000, "límite total y de atasco")
+	brain.record_speed(3500, 20000, 100, 40000)
+	check(brain.prompt_tps > 5.0, "la velocidad medida se actualiza con respuestas reales")
+	brain.prompt_tps = old_p
+	brain.gen_tps = old_g
 
 
 func test_ai_call_with_fake_engine() -> void:

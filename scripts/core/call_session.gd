@@ -69,6 +69,7 @@ var _greeting: Dictionary = {}
 var _pending_end := ""
 var _pending_sale: Dictionary = {}
 var _announced := false
+var _rebuild_chars := 0          # al reintentar se relee toda la conversación
 
 
 # ------------------------------------------------------------------ Preparación
@@ -276,15 +277,18 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 	_throttle(true)
 	var t0 := Time.get_ticks_msec()
 	var stream: Object = make_stream.call()
-	var res := await AIStream.read(chat, stream, func(txt: String): _on_partial(txt, my_cancel), my_cancel, _limits())
+	var lim := _limits(message)
+	var res := await AIStream.read(chat, stream, func(txt: String): _on_partial(txt, my_cancel), my_cancel, lim)
 	_throttle(false)
 	_set_busy(false)
 	if my_cancel["cancel"]:
 		return {"ok": false, "error": "cancelado"}
 	if res["first_ms"] >= 0:
 		first_token_times.append(res["first_ms"])
+	if res["ok"]:
+		Brain.record_speed(message.length() + 300 + (_sys_prompt.length() if _msgs.is_empty() else 0), res["first_ms"], res["tokens"], res["total_ms"])
 	if not res["ok"]:
-		AILog.add("llamada", "%s: %s (primer token %s, %d tokens, %.1f s)" % [kind, AIStream.error_text(res["error"]), str(res["first_ms"]), res["tokens"], res["total_ms"] / 1000.0])
+		AILog.add("llamada", "%s: %s (primer token %s, %d tokens, %.1f s; límites: primer token %d s, total %d s)" % [kind, AIStream.error_text(res["error"]), str(res["first_ms"]), res["tokens"], res["total_ms"] / 1000.0, lim["first"] / 1000, lim["total"] / 1000])
 		return {"ok": false, "error": res["error"]}
 	var r := _parse(res["text"])
 	if not r["ok"]:
@@ -299,7 +303,7 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 		my_cancel = _cancel
 		_announced = not announce
 		_set_busy(true)
-		var res2 := await AIStream.read(chat, chat.complete(msgs, {}), func(txt: String): _on_partial(txt, my_cancel), my_cancel, _limits())
+		var res2 := await AIStream.read(chat, chat.complete(msgs, {}), func(txt: String): _on_partial(txt, my_cancel), my_cancel, _limits(message + _sys_prompt))
 		_set_busy(false)
 		var r2 := _parse(res2["text"]) if res2["ok"] else {"ok": false}
 		if r2["ok"]:
@@ -314,9 +318,16 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 	return r
 
 
-func _limits() -> Dictionary:
-	var first := int(flags.get("first_token_ms", AIStream.FIRST_TOKEN_MS))
-	return {"first": first, "stall": mini(AIStream.STALL_MS, first), "total": AIStream.TOTAL_MS}
+## Límites de esta petición. El primer mensaje incluye las instrucciones completas del
+## cliente (unos 3000 caracteres), que el modelo tiene que leer antes de contestar.
+func _limits(message: String = "") -> Dictionary:
+	if flags.has("first_token_ms"):  # pruebas
+		var f := int(flags["first_token_ms"])
+		return {"first": f, "stall": mini(AIStream.STALL_MS, f), "total": AIStream.TOTAL_MS}
+	var chars := message.length() + 300 + _rebuild_chars
+	if _msgs.is_empty() or _rebuild_chars > 0:
+		chars += _sys_prompt.length()
+	return Brain.limits_for(chars)
 
 
 func _on_partial(txt: String, my_cancel: Dictionary) -> void:
@@ -358,7 +369,11 @@ func retry() -> void:
 		return
 	var msgs := _msgs.slice(maxi(0, _msgs.size() - 12))
 	msgs.append({"role": "user", "content": f["message"]})
+	_rebuild_chars = 0
+	for m in msgs:
+		_rebuild_chars += str(m["content"]).length()
 	var r := await _generate(f["kind"], f["message"], func(): return chat.complete(msgs, {}))
+	_rebuild_chars = 0
 	if not active:
 		return
 	if not r.get("ok", false):

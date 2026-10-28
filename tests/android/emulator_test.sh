@@ -58,7 +58,7 @@ while true; do
     break
   fi
   adb shell run-as $PKG cat files/autotest/resultado.txt 2>/dev/null | tail -2
-  if [ $(( $(date +%s) - START )) -gt 4800 ]; then echo "Tiempo agotado"; echo "TIEMPO" > $OUT/estado.txt; break; fi
+  if [ $(( $(date +%s) - START )) -gt 9000 ]; then echo "Tiempo agotado"; echo "TIEMPO" > $OUT/estado.txt; break; fi
 done
 adb exec-out run-as $PKG cat files/autotest/resultado.txt > $OUT/resultado.txt 2>/dev/null || true
 for f in 01_inicio 02_oficina 03_oferta 04_llamada 05_venta 06_resumen 07_evaluacion; do

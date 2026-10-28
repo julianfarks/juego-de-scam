@@ -115,7 +115,7 @@ func _run() -> void:
 	cs._begin_call()
 	var s: CallSession = cs.session
 	t0 = Time.get_ticks_msec()
-	while (s.phase in ["", "preparando", "pensando"]) and Time.get_ticks_msec() - t0 < 300000:
+	while (s.phase in ["", "preparando", "pensando"]) and Time.get_ticks_msec() - t0 < 900000:
 		await wait(0.5)
 	check(s.mode == "ia", "la llamada usa la IA local (modo %s)" % s.mode)
 	if s.phase == "error":
@@ -144,7 +144,7 @@ func _run() -> void:
 		cs._say(line, false)
 		t0 = Time.get_ticks_msec()
 		await wait(0.3)
-		while s.phase == "pensando" and Time.get_ticks_msec() - t0 < 200000:
+		while s.phase == "pensando" and Time.get_ticks_msec() - t0 < 900000:
 			await wait(0.5)
 		if s.phase == "pensando":
 			stuck += 1

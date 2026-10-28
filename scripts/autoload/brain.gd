@@ -43,6 +43,9 @@ var available := false              # ¿está la extensión NobodyWho en esta pl
 var gpu_used := false
 var load_ms := 0
 var turns_total := 0
+# Velocidad medida en ESTE dispositivo (para ajustar los límites de tiempo):
+var prompt_tps := 40.0   # tokens de entrada por segundo (lectura del contexto)
+var gen_tps := 8.0       # tokens generados por segundo
 var turn_ms_total := 0
 var _dl_done := 0
 var _dl_total := 0
@@ -453,6 +456,25 @@ func _load_and_test(use_gpu: bool) -> bool:
 	return true
 
 
+## Límites de tiempo para una petición, ajustados a la velocidad MEDIDA de este
+## dispositivo: 3 veces lo esperado, nunca menos de 60 s ni más de 7 min. Así un móvil
+## lento no se confunde con uno bloqueado, y un bloqueo real se corta igualmente.
+func limits_for(prompt_chars: int, max_tokens := 160) -> Dictionary:
+	var expected_first := (prompt_chars / 3.2) / maxf(1.0, prompt_tps) * 1000.0
+	var first := int(clampf(expected_first * 3.0 + 15000.0, 60000.0, 420000.0))
+	var gen := int(clampf(float(max_tokens) / maxf(0.3, gen_tps) * 1000.0 * 2.0, 60000.0, 420000.0))
+	return {"first": first, "stall": 25000, "total": first + gen}
+
+
+## Actualiza la velocidad medida con una respuesta real (media móvil).
+func record_speed(prompt_chars: int, first_ms: int, tokens: int, total_ms: int) -> void:
+	if first_ms > 0 and prompt_chars > 200:
+		prompt_tps = lerpf(prompt_tps, clampf((prompt_chars / 3.2) / (first_ms / 1000.0), 1.0, 2000.0), 0.3)
+	var gen_ms := total_ms - maxi(0, first_ms)
+	if tokens > 5 and gen_ms > 0:
+		gen_tps = lerpf(gen_tps, clampf(float(tokens - 1) / (gen_ms / 1000.0), 0.3, 200.0), 0.3)
+
+
 ## Prueba rápida del modelo: una respuesta corta con tiempo límite.
 ## Devuelve {ok, error, error_text, first_ms, total_ms, tokens, tok_per_s, text}.
 func self_test(first_limit_ms := 45000) -> Dictionary:
@@ -474,13 +496,17 @@ func self_test(first_limit_ms := 45000) -> Dictionary:
 	out["text"] = r["text"]
 	var gen_ms := maxi(1, r["total_ms"] - maxi(0, r["first_ms"]))
 	out["tok_per_s"] = float(maxi(0, r["tokens"] - 1)) / (gen_ms / 1000.0)
+	if r["ok"] and r["tokens"] > 3:
+		gen_tps = clampf(out["tok_per_s"], 0.3, 200.0)
+		# ~60 tokens de entrada en la prueba (plantilla + instrucciones + pregunta)
+		prompt_tps = clampf(60.0 / maxf(0.2, r["first_ms"] / 1000.0), 1.0, 2000.0)
 	var j = JSON.parse_string(r["text"]) if r["ok"] else null
 	out["ok"] = r["ok"] and j is Dictionary and str(j.get("respuesta", "")) != ""
 	out["error"] = r["error"] if r["error"] != "" else ("" if out["ok"] else "json")
 	out["error_text"] = AIStream.error_text(out["error"]) if out["error"] != "json" else "La respuesta no tenía el formato esperado"
-	AILog.add("prueba", "%s · primer token %s · %d tokens en %.1f s (%.1f tokens/s)%s" % [
+	AILog.add("prueba", "%s · primer token %s · %d tokens en %.1f s (%.1f tokens/s; lectura ≈ %.0f tokens/s)%s" % [
 		"OK" if out["ok"] else "FALLO", ("%.1f s" % (r["first_ms"] / 1000.0)) if r["first_ms"] >= 0 else "nunca",
-		r["tokens"], r["total_ms"] / 1000.0, out["tok_per_s"], "" if out["ok"] else " · " + out["error_text"]])
+		r["tokens"], r["total_ms"] / 1000.0, out["tok_per_s"], prompt_tps, "" if out["ok"] else " · " + out["error_text"]])
 	return out
 
 
