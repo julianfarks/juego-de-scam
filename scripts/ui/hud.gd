@@ -230,7 +230,8 @@ func _refresh_ai() -> void:
 	var txt := Brain.status_text()
 	match Brain.llm_state:
 		"ready":
-			col = UIKit.C_GOOD
+			col = UIKit.C_GOOD if Brain.expected_reply_seconds() <= 45.0 else Color("f5b041")
+			txt = "IA probada · ~%d s por respuesta" % int(Brain.expected_reply_seconds())
 		"loading":
 			col = UIKit.C_ACCENT
 		"downloading":

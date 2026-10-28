@@ -30,13 +30,31 @@ jobs:
           curl -fsSL -o p2 $B/gemma4-e2b-q4km.gguf.002
           cat p1 p2 > gemma4-e2b.gguf && rm p1 p2
           ls -la; head -c 4 gemma4-e2b.gguf; echo
+      - name: Variante candidata SOLO PARA MEDIR (Gemma 4 E2B QAT Q4_0 oficial de Google; el juego no la usa)
+        continue-on-error: true
+        run: |
+          cd models_local
+          H=https://huggingface.co
+          curl -fsSL $H/api/models/google/gemma-4-E2B-it-qat-q4_0-gguf | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(s['rfilename'] for s in d.get('siblings',[])))" | tee qat_files.txt
+          F=$(grep -i "\.gguf$" qat_files.txt | grep -vi mmproj | head -1)
+          echo "Archivo: $F"
+          curl -fsSL -o gemma4-e2b-qat-q4_0.gguf "$H/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/$F" && ls -la
       - name: Importar
         run: godot --headless --path . --import || true
       - name: Prueba independiente de Gemma
         run: |
           mkdir -p bench_out
           lscpu > bench_out/cpu.txt; free -m >> bench_out/cpu.txt
-          timeout 3000 godot --headless --path . tests/eval/gemma_bench.tscn -- --model=$PWD/models_local/gemma4-e2b.gguf --threads=1,2,4 2>&1 | tee bench_out/gemma_bench.txt | grep BENCH
+          timeout 3000 godot --headless --path . tests/eval/gemma_bench.tscn -- --model=$PWD/models_local/gemma4-e2b.gguf --threads=2,4 2>&1 | tee bench_out/gemma_bench.txt | grep BENCH
+      - name: Prueba de la variante Q4_0 (solo medición)
+        continue-on-error: true
+        run: |
+          if [ -f models_local/gemma4-e2b-qat-q4_0.gguf ]; then
+            timeout 3000 godot --headless --path . tests/eval/gemma_bench.tscn -- --model=$PWD/models_local/gemma4-e2b-qat-q4_0.gguf --threads=4 2>&1 | tee bench_out/gemma_bench_qat_q4_0.txt | grep BENCH
+            timeout 2400 godot --headless --path . tests/eval/call_eval.tscn -- --model=$PWD/models_local/gemma4-e2b-qat-q4_0.gguf --client=chucho --script=queso --threads=4 2>&1 \
+              | grep -E "^>|^<|^   \[|CLIENTE|Modelo|RESUMEN|MEMORIA|PROPUESTA FINAL|ERROR" > bench_out/qat-conversacion-chucho-queso.txt
+            grep RESUMEN bench_out/qat-conversacion-chucho-queso.txt
+          fi
       - name: Conversación de 12 intercambios (código del juego, 4 hilos)
         run: |
           for pair in tomasito:queso remedios:jardin; do

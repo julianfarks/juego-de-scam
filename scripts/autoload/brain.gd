@@ -206,11 +206,14 @@ func is_ready() -> bool:
 func status_text() -> String:
 	match llm_state:
 		"ready":
-			if llm_pack == "llm_ligero":
-				return "IA local activa (cerebro ligero: conversación poco coherente)"
-			return "IA local activa (%s)" % PACKS[llm_pack]["label"].get_slice("(", 1).trim_suffix(")")
+			var name: String = "cerebro ligero, conversación poco coherente" if llm_pack == "llm_ligero" else String(PACKS[llm_pack]["label"]).get_slice("(", 1).trim_suffix(")")
+			var speed := "%.0f tokens/s escribiendo, %.0f leyendo" % [gen_tps, prompt_tps]
+			var est := expected_reply_seconds()
+			if est > 45.0:
+				return "IA cargada y probada (%s): %s → unas %d s por respuesta; tu móvil es lento para este modelo" % [name, speed, int(est)]
+			return "IA cargada y probada (%s): %s → unas %d s por respuesta" % [name, speed, int(est)]
 		"loading":
-			return "Cargando la IA local…"
+			return "Cargando y probando la IA local…"
 		"downloading":
 			return "Descargando la IA local…"
 		"missing":
@@ -469,6 +472,12 @@ func limits_for(prompt_chars: int, max_tokens := 160) -> Dictionary:
 	var first := int(clampf(expected_first * 3.0 + 15000.0, 60000.0, 420000.0))
 	var gen := int(clampf(float(max_tokens) / maxf(0.3, gen_tps) * 1000.0 * 2.0, 60000.0, 420000.0))
 	return {"first": first, "stall": 25000, "total": first + gen}
+
+
+## Segundos estimados hasta que el cliente dice su frase (saludo: ~760 tokens de
+## instrucciones + ~35 tokens de frase), con la velocidad medida en este dispositivo.
+func expected_reply_seconds() -> float:
+	return 760.0 / maxf(1.0, prompt_tps) + 35.0 / maxf(0.3, gen_tps)
 
 
 ## Actualiza la velocidad medida con una respuesta real (media móvil).

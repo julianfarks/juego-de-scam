@@ -79,6 +79,8 @@ func _sanitize(key: String, value: Variant) -> Variant:
 				return 60 if v >= 45 else 30
 			if key == "shift_minutes":
 				return clampi(v, 4, 15)
+			if key == "ai_threads":
+				return clampi(v, 0, 16)
 			return v
 		TYPE_FLOAT:
 			return clampf(float(value), 0.0, 2.0)

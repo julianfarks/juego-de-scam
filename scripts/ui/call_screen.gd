@@ -689,7 +689,11 @@ func _process(delta: float) -> void:
 		mic_level.value = Voice.mic_level
 	if thinking_label and session:
 		if session.busy:
-			thinking_label.text = "%d s · Cancelar para cortar" % int((Time.get_ticks_msec() - _think_t0) / 1000.0)
+			var secs := int((Time.get_ticks_msec() - _think_t0) / 1000.0)
+			if session.gen_stage == "leyendo":
+				thinking_label.text = "Leyendo la conversación (aún sin primera palabra) · %d s · Cancelar para cortar" % secs
+			else:
+				thinking_label.text = "Escribiendo · %d fragmentos · %d s" % [session.gen_tokens, secs]
 		elif Voice.mic_state in ["listening", "transcribing", "speaking"]:
 			thinking_label.text = {"listening": "Escuchando tu voz…", "transcribing": "Pasando tu voz a texto…", "speaking": "%s habla" % _short_name()}[Voice.mic_state]
 		else:

@@ -118,8 +118,11 @@ static func overlaps_seller(label: String, seller_texts: Array) -> bool:
 
 
 static func is_action_label(text: String) -> bool:
+	# Exclamaciones o preguntas: es algo que DICE el cliente, no el producto
+	if text.contains("!") or text.contains("?") or text.contains("¡") or text.contains("¿"):
+		return true
 	var w := IntentClassifier.normalize(text).strip_edges().split(" ", false)
-	return not w.is_empty() and ACTION_WORDS.has(w[0])
+	return not w.is_empty() and (ACTION_WORDS.has(w[0]) or w[0] in ["dame", "dime", "traeme", "quiero", "me", "si", "no", "perfecto", "listo", "vale"])
 
 
 ## Afinidad del cliente con las categorías de la propuesta (multiplicador de cierre).

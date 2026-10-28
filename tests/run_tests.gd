@@ -499,7 +499,7 @@ func test_free_proposals() -> void:
 	check(st.set_proposal("queso artesanal con entrega a domicilio") and st.proposal_log.size() == 2, "cambia la propuesta y guarda el historial")
 	check(st.proposal_label().begins_with("Queso"), "etiqueta legible de la propuesta")
 	check(not st.set_proposal("Confirmar la compra de los dos quesos") and st.proposal.begins_with("Queso"), "una acción no sustituye a la propuesta")
-	for meta in ["Despedida y colgar", "Esperando información", "Recordar la primera oferta", "Nada", "Información sobre si tengo plantas"]:
+	for meta in ["Despedida y colgar", "Esperando información", "Recordar la primera oferta", "Nada", "Información sobre si tengo plantas", "¡Tráeme varias! ¡Quiero hacer una fiesta de quesos!", "Dime qué vendes", "¡Perfecto! ¡Listo para recibir mis quesos!"]:
 		check(not st.set_proposal(meta), "«%s» no es una propuesta" % meta)
 	st.add_history("player", "Le ofrezco un servicio de jardinería a domicilio")
 	check(not st.set_proposal("Seguro de coches"), "no se registra algo que el vendedor nunca ofreció")

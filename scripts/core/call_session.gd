@@ -26,6 +26,7 @@ signal busy_changed(busy: bool)
 signal phase_changed(phase: String)
 signal ai_error(message: String, technical: String)
 signal proposal_changed(text: String)
+signal gen_progress(stage: String, tokens: int)   # leyendo | escribiendo | completada | error
 signal sale_completed(card: Dictionary, amount: int)
 signal ended(result: Dictionary)
 signal notice(text: String)
@@ -69,7 +70,9 @@ var _greeting: Dictionary = {}
 var _pending_end := ""
 var _pending_sale: Dictionary = {}
 var _announced := false
-var _rebuild_chars := 0          # al reintentar se relee toda la conversación
+var _rebuild_chars := 0
+var gen_stage := ""              # leyendo (antes del primer token) | escribiendo | completada | error
+var gen_tokens := 0          # al reintentar se relee toda la conversación
 
 
 # ------------------------------------------------------------------ Preparación
@@ -278,7 +281,12 @@ func _generate(kind: String, message: String, make_stream: Callable, announce :=
 	var t0 := Time.get_ticks_msec()
 	var stream: Object = make_stream.call()
 	var lim := _limits(message)
+	gen_stage = "leyendo"
+	gen_tokens = 0
+	gen_progress.emit(gen_stage, 0)
 	var res := await AIStream.read(chat, stream, func(txt: String): _on_partial(txt, my_cancel), my_cancel, lim)
+	gen_stage = "completada" if res["ok"] else "error"
+	gen_progress.emit(gen_stage, gen_tokens)
 	_throttle(false)
 	_set_busy(false)
 	if my_cancel["cancel"]:
@@ -331,7 +339,14 @@ func _limits(message: String = "") -> Dictionary:
 
 
 func _on_partial(txt: String, my_cancel: Dictionary) -> void:
-	if my_cancel["cancel"] or _announced:
+	if my_cancel["cancel"]:
+		return
+	gen_tokens += 1
+	if gen_stage == "leyendo":
+		gen_stage = "escribiendo"
+	if gen_tokens == 1 or gen_tokens % 5 == 0:
+		gen_progress.emit(gen_stage, gen_tokens)
+	if _announced:
 		return
 	var partial := JsonPeek.string_field(txt, "respuesta")
 	if partial != "":

@@ -189,31 +189,17 @@ func _tab_voice() -> void:
 		if Brain.voice_state != "ready" and Brain.missing_packs().is_empty():
 			await Brain.load_voice()
 		Voice.speak("¡Hola! Soy un cliente de prueba y no pienso comprarle nada… o quizá sí.", {"id": "test", "female": true, "pitch": 1.05, "speed": 1.0}), UIKit.C_PANEL2, 56, 20))
-	# Diagnóstico: comprobar archivos, probar la IA y ver/copiar el registro técnico
+	# Hilos y diagnóstico
+	var topo := GemmaBench.cpu_topology()
+	_option_row(p, "Hilos de la IA", "ai_threads", [0, 2, 4, 6, 8], ["Automático (%d: núcleos grandes)" % GemmaBench.recommended_threads(), "2", "4", "6", "8"])
+	p.add_child(UIKit.label("Tu procesador: %d núcleos, %d grandes. Usar los pequeños de eficiencia suele ralentizar la IA; «Comparar hilos» mide cuál va mejor en tu móvil." % [topo["total"], topo["big"]], 17, UIKit.C_MUTED))
 	p.add_child(UIKit.label("Diagnóstico", 24, UIKit.C_ACCENT))
-	var diag := UIKit.label("", 19, UIKit.C_MUTED)
-	p.add_child(diag)
 	var dh := UIKit.hbox(8)
 	p.add_child(dh)
-	dh.add_child(UIKit.button("Comprobar archivos", func() -> void:
-		var out := []
-		for r in Brain.verify_packs():
-			out.append("%s %s: %s" % ["✔" if r["ok"] else "✘", r["label"], r["detail"]])
-		diag.text = "\n".join(PackedStringArray(out)), UIKit.C_PANEL2, 56, 19))
-	dh.add_child(UIKit.button("Probar la IA", func() -> void:
-		if Brain.llm_state != "ready":
-			diag.text = "La IA no está cargada (%s). Pulsa «Descargar modelos de IA» para cargarla." % Brain.status_text()
-			if Brain.missing_packs().is_empty() and Brain.llm_state != "loading":
-				Brain.load_all()
-			return
-		diag.text = "Probando (máximo 45 s)…"
-		var t: Dictionary = await Brain.self_test()
-		if not is_instance_valid(diag):
-			return
-		if t["ok"]:
-			diag.text = "✔ La IA responde. Primer token en %.1f s; %d tokens en %.1f s (%.1f tokens/s). Respuesta: %s" % [t["first_ms"] / 1000.0, t["tokens"], t["total_ms"] / 1000.0, t["tok_per_s"], AIResponse.sanitize_text(t["text"], 120)]
-		else:
-			diag.text = "✘ La IA no respondió bien: %s. Mira el registro y, si quieres, cópialo para enviarlo." % t["error_text"], UIKit.C_PANEL2, 56, 19))
+	dh.add_child(UIKit.button("Abrir diagnóstico de la IA (pruebas por separado)", func() -> void:
+		var dp := DiagnosticsPanel.new()
+		get_tree().root.add_child(dp)
+		dp.open(), UIKit.C_BLUE, 56, 19))
 	dh.add_child(UIKit.button("Ver registro", func() -> void: _show_log(), UIKit.C_PANEL2, 56, 19))
 	p.add_child(UIKit.button("Borrar modelos descargados (libera espacio)", func() -> void:
 		Brain.delete_models()
