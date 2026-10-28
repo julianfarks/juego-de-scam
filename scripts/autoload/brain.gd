@@ -45,6 +45,7 @@ var gpu_used := false
 var load_ms := 0
 var turns_total := 0
 # Velocidad medida en ESTE dispositivo (para ajustar los límites de tiempo):
+var _testing := false        # durante la prueba de carga (la IA aún NO está lista)
 var n_threads := 0          # hilos usados por la IA (0 = automático de NobodyWho)
 var prompt_tps := 40.0   # tokens de entrada por segundo (lectura del contexto)
 var gen_tps := 8.0       # tokens generados por segundo
@@ -453,9 +454,11 @@ func _load_and_test(use_gpu: bool) -> bool:
 	AILog.add("carga", "Modelo cargado en %.1f s" % (load_ms / 1000.0))
 	# Prueba real: ¿devuelve tokens? (antes esto no se comprobaba y una GPU bloqueada
 	# dejaba al cliente «pensando» para siempre)
-	llm_state = "ready"
+	# La prueba crea su conversación sin marcar la IA como lista: el estado «ready»
+	# solo se pone cuando la prueba ha generado texto de verdad.
+	_testing = true
 	var test := await self_test(45000)
-	llm_state = "loading"
+	_testing = false
 	if not test["ok"]:
 		last_error = "El modelo se cargó pero no responde: %s" % test["error_text"]
 		AILog.add("error", last_error)
@@ -605,7 +608,7 @@ static func make_sampler(schema: Dictionary, temperature := 0.8) -> Object:
 
 
 func new_chat(system_prompt: String, schema: Dictionary, temperature := 0.8) -> Object:
-	if llm_state != "ready" or model == null:
+	if (llm_state != "ready" and not _testing) or model == null:
 		return null
 	var sampler = make_sampler(schema, temperature)
 	var m := model

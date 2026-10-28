@@ -717,6 +717,7 @@ func test_adaptive_limits() -> void:
 	check(brain.prompt_tps > 5.0, "la velocidad medida se actualiza con respuestas reales")
 	brain.prompt_tps = old_p
 	brain.gen_tps = old_g
+	check(brain.get("_testing") == false, "fuera de la prueba de carga no hay estado intermedio")
 
 
 func test_ai_call_with_fake_engine() -> void:
